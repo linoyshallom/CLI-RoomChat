@@ -12,11 +12,11 @@ from server.server_config import ServerConfig
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
 
 class ChatDB:
-    def __init__(self, *, db_path: str):
-        self.db_path =db_path
+    def __init__(self):
+        self.db_path = ServerConfig.db_path
 
     def setup_database(self):
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True) # create a directory f doesn't exist
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -45,6 +45,15 @@ class ChatDB:
                FOREIGN KEY (room_id) REFERENCES rooms(id) 
                );
            ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            file_id TEXT NOT NULL
+            );
+        ''')
+
         db.commit()
         db.close()
 
@@ -114,6 +123,21 @@ class ChatDB:
         db.commit()
         db.close()
 
+    def store_file(self, *, file_path: str, file_id: str):
+        db = sqlite3.connect(self.db_path)
+        cursor = db.cursor()
+
+        cursor.execute('''
+            INSERT INTO messages (file_path, file_id)
+            VALUES (?,?,?,?)''', (file_path, file_id))
+        db.commit()
+        db.close()
+
+    def file_path_by_file_id(self, *, file_id: str) -> str:
+        db = sqlite3.connect(self.db_path)
+        cursor = db.cursor()
+        cursor.execute('SELECT file_path FROM files WHERE file_id = ?', (file_id,))
+        return cursor.fetchone()[0]
 
     @staticmethod
     def get_sender_id_from_users(*, sender_name: str, cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist
@@ -127,8 +151,10 @@ class ChatDB:
 
     @staticmethod
     def get_room_id_from_rooms(*, room_name: str, cursor) -> int:   #CHECK cursor type
+        print(f"cursor type {type(cursor)}")
         cursor.execute('SELECT id FROM rooms WHERE room_name = ?', (room_name,))
         return cursor.fetchone()[0]
+
 
 def main():
     ...

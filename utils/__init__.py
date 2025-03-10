@@ -1,1 +1,1 @@
-from utils.utils import RoomTypes
+from utils.utils import RoomTypes, chunkify

@@ -7,8 +7,15 @@ class RoomTypes(enum.Enum):
     GLOBAL = "GLOBAL"
     PRIVATE = "PRIVATE"
 
-def chunkify(reader_file: typing.IO[bytes], chunk_size: 65536 ) -> typing.Generator[bytes,None,None]:
-    ...
+
+def chunkify(*, reader_file: typing.IO[bytes], chunk_size: typing.Optional[int] = 65536) -> typing.Generator[bytes, None, None]:
+    while True:
+        chunk = reader_file.read(chunk_size)
+
+        if not chunk:
+            break
+
+        yield chunk
 
 # class WriteError(Exception):
 #     pass

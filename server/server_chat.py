@@ -8,10 +8,10 @@ from client.client_chat import ClientInfo
 from server.db.chat_db import ChatDB
 from server_config import ServerConfig
 from utils import RoomTypes
+from server_file_transfer import FileTransferServer
 
 
 class ChatServer:
-    #should be renamed to MessageServer?
     def __init__(self, *, host, listen_port):   #should be init class or not?
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -24,12 +24,13 @@ class ChatServer:
         self.active_clients: typing.Set[ClientInfo] = set()
         self.room_name_to_active_clients: typing.DefaultDict[str, typing.List[ClientInfo]] = defaultdict(list)
 
-        self.chat_db = ChatDB(db_path=ServerConfig.db_path)
+        self.chat_db = ChatDB()
         self.chat_db.setup_database()
 
         self.room_setup_done_flag = threading.Event()
 
     def client_handler(self, conn):
+        print(f"conn type {type(conn)}")  #CHECK
         sender_name = conn.recv(1024).decode('utf-8')
         print(f"Got username {sender_name}")
         self.chat_db.store_user(sender_name=sender_name.strip())
@@ -45,7 +46,7 @@ class ChatServer:
         received_messages_thread = threading.Thread(target=self._receiving_messages, args=(conn, client_info,)) #get client info?
         received_messages_thread.start()
 
-    def _room_setup(self, conn, client_info):
+    def _room_setup(self, conn, client_info: ClientInfo):
         while True:
             room_type = conn.recv(1024).decode('utf-8')
 
@@ -75,7 +76,7 @@ class ChatServer:
 
             break
 
-    def _receiving_messages(self, conn, client_info):
+    def _receiving_messages(self, conn, client_info: ClientInfo):
         while True:
                 self.room_setup_done_flag.wait()
 
@@ -121,12 +122,12 @@ class ChatServer:
                     client.client_conn.send(final_msg.encode('utf-8'))
                     print(f"send to {client.username}")
 
-    def _remove_client_in_current_room(self, *, current_room, sender_username):
+    def _remove_client_in_current_room(self, *, current_room: str, sender_username: str):
         self.room_name_to_active_clients[current_room] = [client for client in self.room_name_to_active_clients[current_room]
                                                           if client.username != sender_username]
 
     def start(self):
-        print("Server started...")
+        print("Chat Server started...")
         while True:
             client_sock, addr = self.server.accept()
             print(f"Successfully connected client {addr[0]} {addr[1]} to messages server")
@@ -134,17 +135,25 @@ class ChatServer:
             thread.start()
 
 def main():
-    server = ChatServer(host='127.0.0.1', listen_port=2)
-    server.start()
+    chat_server = ChatServer(host='127.0.0.1', listen_port=2)
+    chat_server.start()
+
+    # file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=3)
+    # file_transfer_server.start()
 
 
 if __name__ == '__main__':
     main()
 
-# todo add * for functions
-# todo upload and download files form other computers using q and threading
+
+
 # todo add some ttl if x not happens in x time
+# todo use threadPoolExecutor to chat server
+
 # thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  #is it better?
+
+#notes
 # add note that users in private will get only messages came after his join timestamps
 # users in global get all messages ever written
 # broadcast is for users that connect to the same room so they will fetch messages real-time instead of fetching from db
+

@@ -40,7 +40,6 @@ class ChatClient:
             raise Exception(f"Unable to connect to server {repr(e)} ")
 
         self.username = input("Enter your username:")
-        #validate username by regex and not empty
         self.chat_socket.send(self.username.encode('utf-8'))
 
         self._choose_room()
@@ -105,7 +104,7 @@ class ChatClient:
         self.received_history_flag.wait()
 
         while True:
-            if self.receive_message_flag.wait(3):#chnge to 2
+            if self.receive_message_flag.wait(3): #change to 2
                 msg = input(f"\n Enter your message : ")
 
             else:
@@ -120,20 +119,23 @@ class ChatClient:
 
                     elif msg.startswith('/file'):
                         file_path = msg.split()[1]
-                        #file validator by pattern and existence
-                        #self.upload_file
-                        #send file id to messages table
+                        if os.path.isfile(file_path):
+                            self.upload_file(file_path=file_path)
+                            file_id = self._get_generated_file_id()
+                            self.chat_socket.send(file_id.encode('utf-8'))  #CHECK send file id to messages table
 
                     elif msg.startswith('/download'):
                         file_id = msg.split()[1]
-                        dst_path_to_download = msg.split()[2]
-                        #send , send
+                        user_dst_path= msg.split()[2]
+                        self.file_socket.send(file_id.encode('utf-8'))
+                        self.file_socket.send(user_dst_path.encode('utf-8'))
 
                     else:
                         self.chat_socket.send(msg.encode('utf-8'))
 
                     #block writing before receiving again
                     self.receive_message_flag.clear()
+
                 else:
                     #CHECK
                     print("you entered an empty message")
@@ -141,10 +143,13 @@ class ChatClient:
             except Exception as e:
                 raise f"Error sending message: {repr(e)}"
 
-    def upload_file(self, file_path, chunk_size: int = 4096):  #file path can be local in each client
+    def upload_file(self, *, file_path: str, chunk_size: int = 4096):
         try:
             filename = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+
             self.file_socket.send(filename.encode('utf-8'))
+            self.file_socket.send(str(file_size).encode('utf-8'))
 
             with open(file_path, 'rb') as file:
                 while chunk := file.read(chunk_size):
@@ -153,12 +158,10 @@ class ChatClient:
         except Exception as e:
             print(f"Error uploading file: {e}")
 
-
-    # def download_file(self, file_id, dst_path):
-    #     ...
-
-    def get_file_id_from_file_server(self):
-        ...
+    def _get_generated_file_id(self) -> str:
+        file_id = self.file_socket.recv(1024).decode()
+        print(f"file {file_id} is uploaded successfully! , now people can download it")
+        return file_id
 
     @staticmethod
     def _user_input_validation(*, username):
@@ -169,18 +172,12 @@ class ChatClient:
             raise InvalidInput("Input username is empty")
 
 
-
 def main():
     _ = ChatClient(host='127.0.0.1')
 
 if __name__ == '__main__':
     main()
 
-
-# if msg is file:
-#     #put in q cause I can get files from many clients asyncronic and activate send file thread
-# def send_file(self):
-#     #handle unexist file , chunkify
 
 #todo validate path, add return value?
 #todo File Transfer - needs to occurs parallel so maybe thread of transfer and other of the chat management
