@@ -44,6 +44,18 @@ class ChatDB:
                FOREIGN KEY (room_id) REFERENCES rooms(id) 
                );
            ''')
+
+        cursor.execute('''
+             CREATE TABLE IF NOT EXISTS room_checkins (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 sender_id INTEGER NOT NULL,
+                 room_id INTEGER NOT NULL,
+                 join_timestamp DATETIME NOT NULL,
+                 FOREIGN KEY (sender_id) REFERENCES users(id), 
+                 FOREIGN KEY (room_id) REFERENCES rooms(id) 
+                 );
+             ''')
+
         db.commit()
         db.close()
 
@@ -113,6 +125,30 @@ class ChatDB:
         db.commit()
         db.close()
 
+    def store_user_checkin_room(self, *, sender_name: str, room_name: str, join_timestamp: str):
+        db = sqlite3.connect(self.db_path)
+        cursor = db.cursor()
+
+        sender_id = ChatDB.get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
+        room_id = ChatDB.get_room_id_from_rooms(room_name=room_name, cursor=cursor)
+
+        cursor.execute('''
+                   INSERT INTO messages (sender_id, room_id, join_timestamp)
+                   VALUES (?,?,?,?)''', (sender_id, room_id, join_timestamp))
+        db.commit()
+        db.close()
+
+    def get_user_join_timestamp(self, sender_name: str, room_name: str) -> str:
+        db = sqlite3.connect(self.db_path)
+        cursor = db.cursor()
+
+        sender_id = ChatDB.get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
+        room_id = ChatDB.get_room_id_from_rooms(room_name=room_name, cursor=cursor)
+
+        cursor.execute('SELECT join_timestamp from room_checkins WHERE sender_id = ? AND room_id = ?',
+                       (sender_id, room_id))
+        db.close()
+        return cursor.fetchone()[0]
 
     @staticmethod
     def get_sender_id_from_users(*, sender_name:str, cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist

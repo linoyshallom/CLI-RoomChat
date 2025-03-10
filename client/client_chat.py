@@ -18,7 +18,7 @@ class ClientInfo:
     username: str
     room_type: RoomTypes = None
     current_room: typing.Optional[str] = None
-    user_joined_timestamp:typing.Optional[datetime] = None
+    # user_joined_timestamp:typing.Optional[datetime] = None
 
 
 class ChatClient:

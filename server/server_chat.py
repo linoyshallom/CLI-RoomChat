@@ -44,18 +44,22 @@ class ChatServer:
         received_messages_thread = threading.Thread(target=self._receiving_messages, args=(conn, client_info,)) #get client info?
         received_messages_thread.start()
 
-    def _room_setup(self, conn, client_info):
+    def _room_setup(self, conn, client_info: ClientInfo):
         while True:
             room_type = conn.recv(1024).decode('utf-8')
 
             if RoomTypes[room_type.upper()] == RoomTypes.PRIVATE:
                 group_name = conn.recv(1024).decode('utf-8')
-                #manage room-users-timestamp table if user exist in this room then I will take its join timestamp, else I will take from db
-                user_join_timestamp = conn.recv(1024).decode('utf-8')
-                client_info.user_joined_timestamp = user_join_timestamp
+
+
+                user_join_timestamp = self.chat_db.get_user_join_timestamp(sender_name=client_info.username, room_name=group_name)
+                if not user_join_timestamp:
+                    user_join_timestamp = conn.recv(1024).decode('utf-8')
+
                 print(f"user join to room timestamp {user_join_timestamp}, {type(user_join_timestamp)}")
 
                 self.chat_db.create_room(room_name=group_name)
+                self.chat_db.store_user_checkin_room(sender_name=client_info.username, room_name=group_name, join_timestamp=user_join_timestamp)
                 self.chat_db.send_previous_messages_in_room(client_info.client_conn, group_name, user_join_timestamp)
 
             else:
