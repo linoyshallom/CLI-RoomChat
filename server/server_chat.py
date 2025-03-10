@@ -3,6 +3,7 @@ import threading
 import typing
 from collections import defaultdict
 from datetime import datetime
+
 from client.client_chat import ClientInfo
 from server.db.chat_db import ChatDB
 from server_config import ServerConfig
@@ -28,11 +29,11 @@ class ChatServer:
         self.room_setup_done_flag = threading.Event()
 
     def client_handler(self, conn):
-        sender_username = conn.recv(1024).decode('utf-8')
-        print(f"Got username {sender_username}")
-        self.chat_db.store_user(sender_username.strip())
+        sender_name = conn.recv(1024).decode('utf-8')
+        print(f"Got username {sender_name}")
+        self.chat_db.store_user(sender_name=sender_name.strip())
 
-        client_info = ClientInfo(client_conn=conn, username=sender_username)
+        client_info = ClientInfo(client_conn=conn, username=sender_name)
 
         print(f"start setup")
         room_setup_thread = threading.Thread(target=self._room_setup, args=(conn, client_info))
@@ -54,12 +55,12 @@ class ChatServer:
                 client_info.user_joined_timestamp = user_join_timestamp
                 print(f"user join to room timestamp {user_join_timestamp}, {type(user_join_timestamp)}")
 
-                self.chat_db.create_room(group_name)
+                self.chat_db.create_room(room_name=group_name)
                 self.chat_db.send_previous_messages_in_room(client_info.client_conn, group_name, user_join_timestamp)
 
             else:
                 group_name = room_type
-                self.chat_db.create_room(group_name)
+                self.chat_db.create_room(room_name=group_name)
                 self.chat_db.send_previous_messages_in_room(client_info.client_conn, group_name)
 
             client_info.room_type = room_type
@@ -92,8 +93,6 @@ class ChatServer:
                         )
 
                         print(f"removing client mapping: {self.room_name_to_active_clients}")
-                        print(f"{client_info.username} left {client_info.current_room}")
-                        # broadcast to all connected clients in room
                         self._room_setup(conn, client_info)
 
                     else:
@@ -107,7 +106,7 @@ class ChatServer:
                             msg_timestamp=msg_timestamp
                         )
 
-                        self.chat_db.store_message(msg, client_info.username, client_info.current_room, msg_timestamp)
+                        self.chat_db.store_message(text_message=msg, sender_name=client_info.username, room_name=client_info.current_room, timestamp=msg_timestamp)
 
     def _broadcast_to_all_active_clients_in_room(self, *, msg, current_room, sender_name, msg_timestamp: typing.Optional[str] = None, pattern:typing.Optional[bool] = True):
         if clients_in_room := self.room_name_to_active_clients.get(current_room):
@@ -125,7 +124,8 @@ class ChatServer:
         self.room_name_to_active_clients[current_room] = [client for client in self.room_name_to_active_clients[current_room]
                                                           if client.username != sender_username]
 
-    def start(self):      #should be in top of the file ?
+    def start(self):
+        # should be in top of the file ?
         print("Server started...")
         while True:
             client_sock, addr = self.server.accept()
@@ -142,10 +142,11 @@ def main():
 if __name__ == '__main__':
     main()
 
-#todo add * for functions
+# todo add * for functions
+
 # todo upload and download files form other computers using q and threading
 # todo add some ttl if x not happens in x time
 
 # add note that users in private will get only messages came after his join timestamps
 # users in global get all messages ever written
-#broadcast is for users that connect to the same room so they will fetch messages real-time instead of fetching from db
+# broadcast is for users that connect to the same room so they will fetch messages real-time instead of fetching from db

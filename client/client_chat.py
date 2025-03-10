@@ -4,10 +4,10 @@ import socket
 import threading
 import typing
 from datetime import datetime
-from traceback import print_tb
 
 from client.client_config import ClientConfig
 from utils.utils import RoomTypes
+
 
 class InvalidInput(Exception):
     pass
@@ -146,5 +146,5 @@ if __name__ == '__main__':
 # def send_file(self):
 #     #handle unexist file , chunkify
 
-#todo validate path,
+#todo validate path, add return value?
 #todo File Transfer - needs to occurs parallel so maybe thread of transfer and other of the chat management
