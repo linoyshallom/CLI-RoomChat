@@ -11,6 +11,7 @@ from utils import RoomTypes
 
 
 class ChatServer:
+    #should be renamed to MessageServer?
     def __init__(self, *, host, listen_port):   #should be init class or not?
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -56,12 +57,12 @@ class ChatServer:
                 print(f"user join to room timestamp {user_join_timestamp}, {type(user_join_timestamp)}")
 
                 self.chat_db.create_room(room_name=group_name)
-                self.chat_db.send_previous_messages_in_room(client_info.client_conn, group_name, user_join_timestamp)
+                self.chat_db.send_previous_messages_in_room(conn=client_info.client_conn, room_name=group_name, join_timestamp=user_join_timestamp)
 
             else:
                 group_name = room_type
                 self.chat_db.create_room(room_name=group_name)
-                self.chat_db.send_previous_messages_in_room(client_info.client_conn, group_name)
+                self.chat_db.send_previous_messages_in_room(conn=client_info.client_conn, room_name=group_name)
 
             client_info.room_type = room_type
             client_info.current_room = group_name
@@ -108,7 +109,7 @@ class ChatServer:
 
                         self.chat_db.store_message(text_message=msg, sender_name=client_info.username, room_name=client_info.current_room, timestamp=msg_timestamp)
 
-    def _broadcast_to_all_active_clients_in_room(self, *, msg, current_room, sender_name, msg_timestamp: typing.Optional[str] = None, pattern:typing.Optional[bool] = True):
+    def _broadcast_to_all_active_clients_in_room(self, *, msg: str, current_room: str, sender_name: str, msg_timestamp: typing.Optional[str] = None, pattern:typing.Optional[bool] = True):
         if clients_in_room := self.room_name_to_active_clients.get(current_room):
             final_msg = msg
             for client in clients_in_room:
@@ -125,13 +126,11 @@ class ChatServer:
                                                           if client.username != sender_username]
 
     def start(self):
-        # should be in top of the file ?
         print("Server started...")
         while True:
             client_sock, addr = self.server.accept()
-            print(f"Successfully connected client {addr[0]} {addr[1]}")
+            print(f"Successfully connected client {addr[0]} {addr[1]} to messages server")
             thread = threading.Thread(target=self.client_handler, args=(client_sock,))
-            # thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  #is it better?
             thread.start()
 
 def main():
@@ -143,10 +142,9 @@ if __name__ == '__main__':
     main()
 
 # todo add * for functions
-
 # todo upload and download files form other computers using q and threading
 # todo add some ttl if x not happens in x time
-
+# thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  #is it better?
 # add note that users in private will get only messages came after his join timestamps
 # users in global get all messages ever written
 # broadcast is for users that connect to the same room so they will fetch messages real-time instead of fetching from db

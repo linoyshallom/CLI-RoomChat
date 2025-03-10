@@ -2,6 +2,7 @@ import os
 import sqlite3
 import time
 import typing
+import socket
 
 from server.server_config import ServerConfig
 
@@ -47,7 +48,7 @@ class ChatDB:
         db.commit()
         db.close()
 
-    def send_previous_messages_in_room(self, conn, room_name: str, join_timestamp: typing.Optional[str] = None):
+    def send_previous_messages_in_room(self, *, conn: socket.socket, room_name: str, join_timestamp: typing.Optional[str] = None):
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -84,7 +85,7 @@ class ChatDB:
 
         db.close()
 
-    def store_user(self, *, sender_name):  #todo if exist do not increase the id
+    def store_user(self, *, sender_name: str):  #todo if exist do not increase the id
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -92,7 +93,7 @@ class ChatDB:
         db.commit()
         db.close()
 
-    def create_room(self, *, room_name): #todo if exist do not increase the id
+    def create_room(self, *, room_name: str): #todo if exist do not increase the id
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -100,7 +101,7 @@ class ChatDB:
         db.commit()
         db.close()
 
-    def store_message(self, *, text_message:str, sender_name:str, room_name:str, timestamp:str):
+    def store_message(self, *, text_message: str, sender_name: str, room_name: str, timestamp: str):
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -115,12 +116,12 @@ class ChatDB:
 
 
     @staticmethod
-    def get_sender_id_from_users(*, sender_name:str, cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist
+    def get_sender_id_from_users(*, sender_name: str, cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist
         cursor.execute('SELECT id FROM users where username = ?', (sender_name,))
         return cursor.fetchone()[0]
 
     @staticmethod
-    def get_sender_name_from_users(*, sender_id:int , cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist
+    def get_sender_name_from_users(*, sender_id: int , cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist
         cursor.execute('SELECT username FROM users where id = ?', (sender_id,))
         return cursor.fetchone()[0]
 
