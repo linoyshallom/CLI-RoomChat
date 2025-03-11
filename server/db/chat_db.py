@@ -7,7 +7,7 @@ from utils import MessageInfo
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
 
 class ChatDBConfig:
-    db_path: str = os.path.join(os.path.dirname(__file__), 'db', 'chat.db')
+    db_path: str = os.path.join(os.getcwd(), 'chat.db')
 
 class ChatDB:
     def __init__(self):
@@ -77,7 +77,6 @@ class ChatDB:
                   ORDER BY timestamp ASC
                   ''', (room_id,))
 
-        print(f"fetch : {cursor.fetchall()} ")
         if old_messages := cursor.fetchall():
             print("old messages section")
             for text_message, sender_id, timestamp in old_messages:
@@ -162,7 +161,7 @@ def main():
               SELECT text_message, sender_id, timestamp FROM messages
                WHERE room_id = ? 
                ORDER BY timestamp ASC
-               ''', (10,))
+               ''', (1,))
     print(cursor.fetchall())
 
 

@@ -110,7 +110,7 @@ class ChatClient:
                         self._choose_room()
 
                     elif msg.startswith('/file'):
-                        file_path = msg.split()[1]
+                        file_path = msg.split()[1]  # pythonic
                         if os.path.isfile(file_path):
                             self.file_socket.send("UPLOAD".encode('utf-8'))
                             self.upload_file_to_server(file_path=file_path)
