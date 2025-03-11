@@ -50,57 +50,62 @@ class ChatServer:
 
             if RoomTypes[room_type.upper()] == RoomTypes.PRIVATE:
                 group_name = conn.recv(1024).decode('utf-8')
+                received_user_join_timestamp = conn.recv(1024).decode('utf-8')
 
+                user_join_timestamp = self.chat_db.get_user_join_timestamp(
+                    sender_name=client_info.username,
+                    room_name=group_name,
+                    join_timestamp=received_user_join_timestamp)
 
-                user_join_timestamp = self.chat_db.get_user_join_timestamp(sender_name=client_info.username, room_name=group_name)
-                if not user_join_timestamp:
-                    user_join_timestamp = conn.recv(1024).decode('utf-8')
-
-                print(f"user join to room timestamp {user_join_timestamp}, {type(user_join_timestamp)}")
-
+                self._broadcast_to_all_active_clients_in_room(
+                    msg=f"{client_info.username} join to {group_name}",
+                    current_room=client_info.current_room,
+                    pattern=False
+                )
                 self.chat_db.create_room(room_name=group_name)
-                self.chat_db.store_user_checkin_room(sender_name=client_info.username, room_name=group_name, join_timestamp=user_join_timestamp)
+                #users in private will get only messages came after his join timestamps
                 self.chat_db.send_previous_messages_in_room(client_info.client_conn, group_name, user_join_timestamp)
 
             else:
                 group_name = room_type
+                print(f"sending joining message")
+                self._broadcast_to_all_active_clients_in_room(
+                    msg=f"{client_info.username} join to {group_name}",
+                    current_room=client_info.current_room,
+                    pattern=False
+                )
                 self.chat_db.create_room(room_name=group_name)
+                # users in global get all messages ever written
                 self.chat_db.send_previous_messages_in_room(client_info.client_conn, group_name)
 
             client_info.room_type = room_type
             client_info.current_room = group_name
             self.room_name_to_active_clients[group_name].append(client_info)
 
-            self.room_setup_done_flag.set()
-            print(f"set setup flag")
-            print(f"client in setup: {client_info}")
-            print(f"mapping room to clients: {self.room_name_to_active_clients}")
-
+            client_info.room_setup_done_flag.set()
+            print(f"finish room setup")
             break
 
     def _receiving_messages(self, conn, client_info):
-        while True:
-                self.room_setup_done_flag.wait()
+        client_info.room_setup_done_flag.wait()
 
+        while True:
                 if msg := conn.recv(2048).decode('utf-8'):
                     if msg == '/switch':
-                        self.room_setup_done_flag.clear() #clear set so all messages send to the setup from this time
-                        print(f"clear setup flag ")
+                        self.room_setup_done_flag.clear() #clear flag so all messages send to the setup from this time
 
                         self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
 
                         self._broadcast_to_all_active_clients_in_room(
                             msg=f"{client_info.username} left {client_info.current_room}",
                             current_room=client_info.current_room,
-                            sender_name=client_info.username,
                             pattern=False
                         )
 
-                        print(f"removing client mapping: {self.room_name_to_active_clients}")
                         self._room_setup(conn, client_info)
 
                     else:
-                        print(f"got message {msg}")
+                        print(f"received message {msg}")
                         msg_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
                         self._broadcast_to_all_active_clients_in_room(
@@ -112,7 +117,7 @@ class ChatServer:
 
                         self.chat_db.store_message(text_message=msg, sender_name=client_info.username, room_name=client_info.current_room, timestamp=msg_timestamp)
 
-    def _broadcast_to_all_active_clients_in_room(self, *, msg, current_room, sender_name, msg_timestamp: typing.Optional[str] = None, pattern:typing.Optional[bool] = True):
+    def _broadcast_to_all_active_clients_in_room(self, *, msg, current_room, sender_name: typing.Optional[str] = None, msg_timestamp: typing.Optional[str] = None, pattern:typing.Optional[bool] = True):
         if clients_in_room := self.room_name_to_active_clients.get(current_room):
             final_msg = msg
             for client in clients_in_room:
@@ -122,20 +127,18 @@ class ChatServer:
                             msg_timestamp=msg_timestamp, sender_name=sender_name, message=msg
                         )
                     client.client_conn.send(final_msg.encode('utf-8'))
-                    print(f"send to {client.username}")
 
     def _remove_client_in_current_room(self, *, current_room, sender_username):
         self.room_name_to_active_clients[current_room] = [client for client in self.room_name_to_active_clients[current_room]
                                                           if client.username != sender_username]
 
     def start(self):
-        # should be in top of the file ?
         print("Server started...")
         while True:
             client_sock, addr = self.server.accept()
             print(f"Successfully connected client {addr[0]} {addr[1]}")
             thread = threading.Thread(target=self.client_handler, args=(client_sock,))
-            # thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  #is it better?
+            # thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  #probably better?
             thread.start()
 
 def main():
@@ -145,12 +148,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# todo add * for functions
-
-# todo upload and download files form other computers using q and threading
-# todo add some ttl if x not happens in x time
-
-# add note that users in private will get only messages came after his join timestamps
-# users in global get all messages ever written
-# broadcast is for users that connect to the same room so they will fetch messages real-time instead of fetching from db

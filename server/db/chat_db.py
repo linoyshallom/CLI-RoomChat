@@ -5,9 +5,6 @@ import typing
 
 from server.server_config import ServerConfig
 
-# from datetime import datetime, timedelta
-# from server.config import ServerConfig
-
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
 
 class ChatDB:
@@ -64,7 +61,6 @@ class ChatDB:
         cursor = db.cursor()
 
         room_id = ChatDB.get_room_id_from_rooms(room_name=room_name, cursor=cursor)
-        print(f"room name: {room_name}, room id {room_id}, joined timestamp {join_timestamp}")
 
         if join_timestamp:
             cursor.execute('''
@@ -125,30 +121,37 @@ class ChatDB:
         db.commit()
         db.close()
 
-    def store_user_checkin_room(self, *, sender_name: str, room_name: str, join_timestamp: str):
+    def get_user_join_timestamp(self, sender_name: str, room_name: str, join_timestamp: str) -> typing.Optional[str]:
         db = sqlite3.connect(self.db_path)
-        cursor = db.cursor()
+        try:
+            cursor = db.cursor()
 
-        sender_id = ChatDB.get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
-        room_id = ChatDB.get_room_id_from_rooms(room_name=room_name, cursor=cursor)
+            sender_id = ChatDB.get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
+            room_id = ChatDB.get_room_id_from_rooms(room_name=room_name, cursor=cursor)
 
-        cursor.execute('''
-                   INSERT INTO messages (sender_id, room_id, join_timestamp)
-                   VALUES (?,?,?,?)''', (sender_id, room_id, join_timestamp))
-        db.commit()
-        db.close()
+            cursor.execute(
+                'SELECT join_timestamp FROM room_checkins WHERE sender_id = ? AND room_id = ?',
+                (sender_id, room_id)
+            )
+            user_join_timestamp = cursor.fetchone()
 
-    def get_user_join_timestamp(self, sender_name: str, room_name: str) -> str:
-        db = sqlite3.connect(self.db_path)
-        cursor = db.cursor()
+            # If no join_timestamp exists, insert a new row with the input timestamp
+            if not user_join_timestamp:
+                cursor.execute(
+                    '''
+                    INSERT INTO room_checkins (sender_id, room_id, join_timestamp)
+                    VALUES (?, ?, ?)
+                    ''',
+                    (sender_id, room_id, join_timestamp)
+                )
+                db.commit()
+                return join_timestamp
 
-        sender_id = ChatDB.get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
-        room_id = ChatDB.get_room_id_from_rooms(room_name=room_name, cursor=cursor)
+            return user_join_timestamp[0]
 
-        cursor.execute('SELECT join_timestamp from room_checkins WHERE sender_id = ? AND room_id = ?',
-                       (sender_id, room_id))
-        db.close()
-        return cursor.fetchone()[0]
+        finally:
+            db.close()
+
 
     @staticmethod
     def get_sender_id_from_users(*, sender_name:str, cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist
@@ -164,35 +167,3 @@ class ChatDB:
     def get_room_id_from_rooms(*, room_name: str, cursor) -> int:   #CHECK cursor type
         cursor.execute('SELECT id FROM rooms WHERE room_name = ?', (room_name,))
         return cursor.fetchone()[0]
-
-def main():
-    ...
-    # chat_db = ChatDB(db_path=ServerConfig.db_path)
-    # chat_db.setup_database()
-
-    # sqlite3.register_adapter(datetime , lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S"))
-    # sqlite3.register_converter("DATETIME", lambda s: datetime.datetime.strptime(s.decode(), "%Y-%m-%d %H:%M:%S"))
-    #
-    # db = sqlite3.connect('chat.db')
-    # cursor = db.cursor()
-    # ChatDB.setup_database()
-    #
-    # cursor.execute('''
-    #           SELECT text_message, sender_id, timestamp FROM messages
-    #            WHERE room_id = ?
-    #            AND timestamp > ?
-    #            ORDER BY timestamp ASC
-    #            ''', (1, datetime.now() - timedelta(hours=2)))
-    #
-    # if old_messages := cursor.fetchall():
-    #     for text_message, sender_id, timestamp in old_messages:
-    #         old_msg_sender = ChatDB.get_user_name_from_users(sender_id, cursor)
-    #         final_msg = f"[{timestamp}] [{old_msg_sender}]: {text_message}"
-    #         print(final_msg)
-    #         time.sleep(0.01)
-    # else:
-    #     print("No messages in this chat yet ...".encode('utf-8'))
-
-
-if __name__ == "__main__":
-    main()

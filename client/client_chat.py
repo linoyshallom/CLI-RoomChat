@@ -18,15 +18,14 @@ class ClientInfo:
     username: str
     room_type: RoomTypes = None
     current_room: typing.Optional[str] = None
-    # user_joined_timestamp:typing.Optional[datetime] = None
-
+    room_setup_done_flag: threading.Event = dataclasses.field(default_factory=threading.Event)
 
 class ChatClient:
     def __init__(self,* , host, listen_port):
         self.client =  socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         self.received_history_flag = threading.Event()
-        self.receive_message_flag = threading.Event()
+        self.receive_message_flag = threading.Event()  #while receiving, display first receive and then send the message in real time
 
         try:
             self.client.connect((host,listen_port))
@@ -36,7 +35,6 @@ class ChatClient:
             raise Exception(f"Unable to connect to server {host,listen_port} {repr(e)} ")
 
         self.username = input("Enter your username:")
-        #validate username by regex and not empty
         self.client.send(self.username.encode('utf-8'))
 
         self._choose_room()
@@ -64,11 +62,10 @@ class ChatClient:
                         join_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         self.client.send(join_timestamp.encode('utf-8'))
 
-                    # print(f"receives all past messages before sending messages")
                     received_thread = threading.Thread(target=self._receive_message, daemon=True)
                     received_thread.start()
 
-                    # self.client.send(f"Joined {chosen_room} {group_name}".encode('utf-8'))  # send to server so it send to all the connected - cant separate the pattern of this to regular messages
+                    self.client.send(f"Joined {chosen_room} {group_name}".encode('utf-8'))
                     print(f"\n you Joined {chosen_room} {group_name}")
 
                     self.received_history_flag.wait() #waiting this to be set before sending a message, so after one messages I receive
@@ -92,38 +89,28 @@ class ChatClient:
                     self.receive_message_flag.set()
 
             except Exception as e:
-                # Ensure conn.recv() doesn’t block forever (consider adding a timeout if needed).
                 self.client.close()
                 raise f"Cannot receiving messages... \n {repr(e)}"
 
     def _send_message(self):
-        # Wait until history is completely received, waiting for .set()
         self.received_history_flag.wait()
 
         while True:
-            if self.receive_message_flag.wait(3):#chnge to 2
+            if self.receive_message_flag.wait(1.5):
                 msg = input(f"\n Enter your message : ")
 
             else:
-                msg = input(f"Enter your message :  ") #still send a message if flag wasn't set
+                msg = input(f"Enter your message :  ") # enable send a message if flag wasn't set
 
-            try:
-                if msg:
-                    if msg.lower() == "/switch":
-                        self.client.send(msg.encode('utf-8'))
-                        self.received_history_flag.clear()
-                        self._choose_room()
-                    else:
-                        self.client.send(msg.encode('utf-8'))
-
-                    #block writing before receiving again
-                    self.receive_message_flag.clear()
+            if msg:
+                if msg.lower() == "/switch":
+                    self.client.send(msg.encode('utf-8'))
+                    self.received_history_flag.clear()
+                    self._choose_room()
                 else:
-                    #CHECK
-                    print("you entered an empty message")
+                    self.client.send(msg.encode('utf-8'))
 
-            except Exception as e:
-                raise f"Error sending message: {repr(e)}"
+                self.receive_message_flag.clear()    #block writing before receiving again
 
     @staticmethod
     def _user_input_validation(*, username):
@@ -139,12 +126,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-# if msg is file:
-#     #put in q cause I can get files from many clients asyncronic and activate send file thread
-# def send_file(self):
-#     #handle unexist file , chunkify
-
-#todo validate path, add return value?
-#todo File Transfer - needs to occurs parallel so maybe thread of transfer and other of the chat management
