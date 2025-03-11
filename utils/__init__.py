@@ -1,1 +1,1 @@
-from utils.utils import RoomTypes, chunkify
+from utils.utils import RoomTypes, chunkify, ClientInfo, MessageInfo

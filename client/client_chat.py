@@ -1,26 +1,16 @@
-import dataclasses
 import os.path
 import re
 import socket
 import threading
-import typing
 from datetime import datetime
 
 from client.client_config import ClientConfig
 from server.server_config import ServerConfig
-from utils.utils import RoomTypes
+from utils.utils import RoomTypes, chunkify
 
 
 class InvalidInput(Exception):
     pass
-
-@dataclasses.dataclass
-class ClientInfo:
-    client_conn: socket.socket
-    username: str
-    room_type: RoomTypes = None
-    current_room: typing.Optional[str] = None
-    user_joined_timestamp:typing.Optional[datetime] = None
 
 
 class ChatClient:
@@ -33,11 +23,15 @@ class ChatClient:
 
         try:
             self.chat_socket.connect((host, ServerConfig.listening_port))
-            self.file_socket.connect((host, ServerConfig.file_server_config.listening_port))
-            print(f"Successfully connected to server")
-
+            print(f"Successfully connected to Chat Server")
         except Exception as e:
-            raise Exception(f"Unable to connect to server {repr(e)} ")
+            raise Exception(f"Unable to connect to server - {host}, {ServerConfig.listening_port} {repr(e)} ")
+
+        try:
+            self.file_socket.connect((host, ServerConfig.file_server_config.listening_port))
+            print(f"Successfully connected to File Server")
+        except Exception as e:
+            raise Exception(f"Unable to connect to server - {host}, {ServerConfig.file_server_config.listening_port} {repr(e)} ")
 
         self.username = input("Enter your username:")
         self.chat_socket.send(self.username.encode('utf-8'))
@@ -54,7 +48,6 @@ class ChatClient:
                 print(f"- {room.value}")
 
             chosen_room = input("Enter room type: ").strip().upper()
-            group_name = ""
 
             try:
                 if room_type := RoomTypes[chosen_room.upper()]:
@@ -67,12 +60,11 @@ class ChatClient:
                         join_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         self.chat_socket.send(join_timestamp.encode('utf-8'))
 
-                    # print(f"receives all past messages before sending messages")
                     received_thread = threading.Thread(target=self._receive_message, daemon=True)
                     received_thread.start()
 
-                    # self.client.send(f"Joined {chosen_room} {group_name}".encode('utf-8'))  # send to server so it send to all the connected - cant separate the pattern of this to regular messages
-                    print(f"\n you Joined {chosen_room} {group_name}")
+                    # self.chat_socket.send(f"Joined {chosen_room} {group_name}".encode('utf-8'))  # send to server so it send to all the connected - cant separate the pattern of this to regular messages
+                    # print(f"\n you Joined {chosen_room} {group_name}")
 
                     self.received_history_flag.wait() #waiting this to be set before sending a message, so after one messages I receive
                     self.receive_message_flag.wait()
@@ -86,7 +78,7 @@ class ChatClient:
         while True:
             try:
                 if msg := self.chat_socket.recv(2048).decode('utf-8'):
-                    if msg == 'END_HISTORY_RETRIEVAL':
+                    if msg == 'END_HISTORY_RETRIEVAL':  #save it as a const variable somewhere accesses here and in db file
                         self.received_history_flag.set()
                         self.receive_message_flag.set()
                         continue
@@ -104,7 +96,7 @@ class ChatClient:
         self.received_history_flag.wait()
 
         while True:
-            if self.receive_message_flag.wait(3): #change to 2
+            if self.receive_message_flag.wait(1.5): #change to 2
                 msg = input(f"\n Enter your message : ")
 
             else:
@@ -120,11 +112,13 @@ class ChatClient:
                     elif msg.startswith('/file'):
                         file_path = msg.split()[1]
                         if os.path.isfile(file_path):
-                            self.upload_file(file_path=file_path)
+                            self.file_socket.send("UPLOAD".encode('utf-8'))
+                            self.upload_file_to_server(file_path=file_path)
                             file_id = self._get_generated_file_id()
                             self.chat_socket.send(file_id.encode('utf-8'))  #CHECK send file id to messages table
 
                     elif msg.startswith('/download'):
+                        self.file_socket.send("DOWNLOAD".encode('utf-8'))
                         file_id = msg.split()[1]
                         user_dst_path= msg.split()[2]
                         self.file_socket.send(file_id.encode('utf-8'))
@@ -143,7 +137,7 @@ class ChatClient:
             except Exception as e:
                 raise f"Error sending message: {repr(e)}"
 
-    def upload_file(self, *, file_path: str, chunk_size: int = 4096):
+    def upload_file_to_server(self, *, file_path: str):
         try:
             filename = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
@@ -152,7 +146,7 @@ class ChatClient:
             self.file_socket.send(str(file_size).encode('utf-8'))
 
             with open(file_path, 'rb') as file:
-                while chunk := file.read(chunk_size):
+                for chunk in chunkify(reader_file=file):
                     self.file_socket.send(chunk)
 
         except Exception as e:

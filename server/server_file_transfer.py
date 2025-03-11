@@ -17,11 +17,11 @@ class DownloadFileError(Exception):
 
 @dataclasses.dataclass(frozen=True)
 class FileServerConfig:
-    listening_port: int = 6
+    listening_port: int = 78
     listener_limit_number: int = 5
     max_file_size: int = 16_000_000
-    upload_dir_dst_path: str = ...  #environment variable?
-    threads_number: int = 7
+    upload_dir_dst_path: str = r"C:\Users\shalo\Documents\Uploads"  #environment variable?
+    max_threads_number: int = 7
 
 class FileTransferServer:
     def __init__(self, host, listen_port):
@@ -37,15 +37,19 @@ class FileTransferServer:
         self.chat_db = ChatDB()
 
     def file_handler(self, conn):
-        upload_thread = threading.Thread(target=self._upload_file, args=(conn,))
-        upload_thread.start()
+        command = conn.rcev(1024).decode()
+        if command == "UPLOAD":
+            upload_thread = threading.Thread(target=self._upload_file, args=(conn,))
+            upload_thread.start()
 
-        download_thread = threading.Thread(target=self._download_file, kwargs={"conn":conn})
-        download_thread.start()
+        if command == "DOWNLOAD":
+            download_thread = threading.Thread(target=self._download_file, kwargs={"conn":conn})
+            download_thread.start()
 
 
     def _upload_file(self, conn):
         while True:
+            print(f"got into upload file")
             file_name = conn.recv(1024).decode()
 
             file_id = self._generate_file_id(file_name=file_name)
@@ -54,14 +58,15 @@ class FileTransferServer:
             try:
                 os.makedirs(os.path.dirname(FileServerConfig.upload_dir_dst_path), exist_ok=True)
             except Exception as e:
-                raise UploadFileError("Upload failed, failed to create dir") from e
+                raise UploadFileError("Upload failed, failed to create Uploads dir") from e
 
-            upload_file_path = os.path.join(FileServerConfig.upload_dir_dst_path, "upload", file_id)
+            upload_file_path = os.path.join(FileServerConfig.upload_dir_dst_path, file_id)
             self.chat_db.store_file(file_path=upload_file_path, file_id=file_id)
 
             self._save_file(upload_file_path=upload_file_path)
 
     def _download_file(self, *, conn):
+        print(f"got into download file")
         file_id = conn.rcev(1024).decode()
         upload_file_path = self.chat_db.file_path_by_file_id(file_id=file_id)
 
@@ -96,8 +101,8 @@ class FileTransferServer:
 
     def start(self):
         print("File Server started...")
-        with ThreadPoolExecutor(max_workers=FileServerConfig.threads_number) as executor:
+        with ThreadPoolExecutor(max_workers=FileServerConfig.max_threads_number) as executor:
             while True:
                 client_sock, addr = self.file_server.accept()
-                print(f"Successfully connected client {addr[0]} {addr[1]} to files server")
+                print(f"Successfully connected client {addr[0]} {addr[1]} to files server \n")
                 executor.submit(self.file_handler, client_sock)

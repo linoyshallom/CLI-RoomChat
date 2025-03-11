@@ -1,5 +1,7 @@
+import dataclasses
+import datetime
 import enum
-import os
+import socket
 import typing
 
 
@@ -7,6 +9,26 @@ class RoomTypes(enum.Enum):
     GLOBAL = "GLOBAL"
     PRIVATE = "PRIVATE"
 
+@dataclasses.dataclass
+class ClientInfo:
+    client_conn: socket.socket
+    username: str
+    room_type: RoomTypes = None
+    current_room: typing.Optional[str] = None
+    user_joined_timestamp:typing.Optional[datetime] = None
+
+@dataclasses.dataclass
+class MessageInfo:
+    text_message: str
+    sender_name: typing.Optional[str] = None
+    msg_timestamp: typing.Optional[str] = None
+
+    def formatted_msg(self) -> str:
+        return f"[{self.msg_timestamp}] [{self.sender_name}]: {self.text_message}"
+
+    #server messages format for join and leave
+
+#class FileInfo , instead utils rename to common and add structs file
 
 def chunkify(*, reader_file: typing.IO[bytes], chunk_size: typing.Optional[int] = 65536) -> typing.Generator[bytes, None, None]:
     while True:
@@ -16,39 +38,3 @@ def chunkify(*, reader_file: typing.IO[bytes], chunk_size: typing.Optional[int] 
             break
 
         yield chunk
-
-# class WriteError(Exception):
-#     pass
-#
-# class FileWriter:
-#
-#     @staticmethod
-#     def writer(*, dst_path: str):  #dst_path = os.path.join(upload_dir, "upload", str(uuid.uuid4())_file_name)
-#         try:
-#             os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-#
-#         except Exception as e:
-#             raise WriteError(f"Failed to create destination directory") from e
-#
-#         try:
-#             f = open(dst_path, 'wb')
-#         except Exception as e:
-#             raise WriteError(f"Failed to open destination file") from e
-#
-#         try:
-#             while True:
-#                 chunk = yield
-#
-#                 if not chunk:
-#                     break
-#
-#                 try:
-#                     f.write(chunk)
-#                 except Exception as e:
-#                     raise WriteError(f"Failed to Write chunk") from e
-#
-#         finally:
-#             try:
-#                 f.close()
-#             except Exception as e:
-#                 raise WriteError(f"Failed to close file") from e

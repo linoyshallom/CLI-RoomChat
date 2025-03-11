@@ -2,13 +2,13 @@ import socket
 import threading
 import typing
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from client.client_chat import ClientInfo
 from server.db.chat_db import ChatDB
-from server_config import ServerConfig
-from utils import RoomTypes
-from server_file_transfer import FileTransferServer
+from server.server_config import ServerConfig
+from server.server_file_transfer import FileTransferServer
+from utils import RoomTypes, ClientInfo, MessageInfo
 
 
 class ChatServer:
@@ -29,8 +29,7 @@ class ChatServer:
 
         self.room_setup_done_flag = threading.Event()
 
-    def client_handler(self, conn):
-        print(f"conn type {type(conn)}")  #CHECK
+    def client_handler(self, conn: socket.socket):
         sender_name = conn.recv(1024).decode('utf-8')
         print(f"Got username {sender_name}")
         self.chat_db.store_user(sender_name=sender_name.strip())
@@ -52,10 +51,9 @@ class ChatServer:
 
             if RoomTypes[room_type.upper()] == RoomTypes.PRIVATE:
                 group_name = conn.recv(1024).decode('utf-8')
-                #manage room-users-timestamp table if user exist in this room then I will take its join timestamp, else I will take from db
                 user_join_timestamp = conn.recv(1024).decode('utf-8')
                 client_info.user_joined_timestamp = user_join_timestamp
-                print(f"user join to room timestamp {user_join_timestamp}, {type(user_join_timestamp)}")
+                print(f"user join to room timestamp {user_join_timestamp}")
 
                 self.chat_db.create_room(room_name=group_name)
                 self.chat_db.send_previous_messages_in_room(conn=client_info.client_conn, room_name=group_name, join_timestamp=user_join_timestamp)
@@ -65,15 +63,16 @@ class ChatServer:
                 self.chat_db.create_room(room_name=group_name)
                 self.chat_db.send_previous_messages_in_room(conn=client_info.client_conn, room_name=group_name)
 
+            # msg_obj = MessageInfo(text_message=f"{client_info.username} joined {room_type} {group_name}")
+            # print(f"msg_obj {msg_obj} ")
+            # self._broadcast_to_all_active_clients_in_room(msg=msg_obj, current_room=client_info.current_room, format_msg=False)
+
             client_info.room_type = room_type
             client_info.current_room = group_name
             self.room_name_to_active_clients[group_name].append(client_info)
 
             self.room_setup_done_flag.set()
             print(f"set setup flag")
-            print(f"client in setup: {client_info}")
-            print(f"mapping room to clients: {self.room_name_to_active_clients}")
-
             break
 
     def _receiving_messages(self, conn, client_info: ClientInfo):
@@ -87,11 +86,11 @@ class ChatServer:
 
                         self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
 
+                        msg_obj = MessageInfo(text_message=f"{client_info.username} left {client_info.current_room}")
                         self._broadcast_to_all_active_clients_in_room(
-                            msg=f"{client_info.username} left {client_info.current_room}",
+                            msg= msg_obj,
                             current_room=client_info.current_room,
-                            sender_name=client_info.username,
-                            pattern=False
+                            format_msg=False
                         )
 
                         print(f"removing client mapping: {self.room_name_to_active_clients}")
@@ -100,27 +99,28 @@ class ChatServer:
                     else:
                         print(f"got message {msg}")
                         msg_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        msg_obj = MessageInfo(text_message=msg, sender_name=client_info.username, msg_timestamp=msg_timestamp)
 
                         self._broadcast_to_all_active_clients_in_room(
-                            msg=msg,
+                            msg=msg_obj,
                             current_room=client_info.current_room,
-                            sender_name=client_info.username,
-                            msg_timestamp=msg_timestamp
+                            format_msg=True
                         )
 
                         self.chat_db.store_message(text_message=msg, sender_name=client_info.username, room_name=client_info.current_room, timestamp=msg_timestamp)
 
-    def _broadcast_to_all_active_clients_in_room(self, *, msg: str, current_room: str, sender_name: str, msg_timestamp: typing.Optional[str] = None, pattern:typing.Optional[bool] = True):
+    def _broadcast_to_all_active_clients_in_room(self, *, msg: MessageInfo, current_room: str, format_msg: bool):
+        '''
+        clients who are connected to the current room gets messages in real-time, and clients
+        connected to another room will fetch the messages form db while joining .
+        '''
         if clients_in_room := self.room_name_to_active_clients.get(current_room):
-            final_msg = msg
             for client in clients_in_room:
                 if client.current_room == current_room:
-                    if pattern:
-                        final_msg = ServerConfig.message_pattern.format(
-                            msg_timestamp=msg_timestamp, sender_name=sender_name, message=msg
-                        )
-                    client.client_conn.send(final_msg.encode('utf-8'))
-                    print(f"send to {client.username}")
+                    msg = msg.formatted_msg() if format_msg else msg.text_message
+                    client.client_conn.send(msg.encode('utf-8'))
+
+                print(f"send to {client.username}")
 
     def _remove_client_in_current_room(self, *, current_room: str, sender_username: str):
         self.room_name_to_active_clients[current_room] = [client for client in self.room_name_to_active_clients[current_room]
@@ -129,31 +129,31 @@ class ChatServer:
     def start(self):
         print("Chat Server started...")
         while True:
-            client_sock, addr = self.server.accept()
-            print(f"Successfully connected client {addr[0]} {addr[1]} to messages server")
-            thread = threading.Thread(target=self.client_handler, args=(client_sock,))
-            thread.start()
+            with ThreadPoolExecutor(max_workers=ServerConfig.max_threads_number) as executor:
+                client_sock, addr = self.server.accept()
+                print(f"Successfully connected client {addr[0]} {addr[1]} to messages server\n")
+                executor.submit(self.client_handler, client_sock)
 
 def main():
-    chat_server = ChatServer(host='127.0.0.1', listen_port=2)
-    chat_server.start()
+    chat_server = ChatServer(host='127.0.0.1', listen_port=ServerConfig.listening_port)
+    file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=ServerConfig.file_server_config.listening_port)
 
-    # file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=3)
-    # file_transfer_server.start()
+    chat_server_thread = threading.Thread(target=chat_server.start, daemon=True)
+    chat_server_thread.start()
+
+    file_server_thread = threading.Thread(target=file_transfer_server.start, daemon=True)
+    file_server_thread.start()
+
+    chat_server_thread.join()
+    file_server_thread.join()
 
 
 if __name__ == '__main__':
     main()
 
 
-
 # todo add some ttl if x not happens in x time
 # todo use threadPoolExecutor to chat server
+# todo thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  is it better?
 
-# thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  #is it better?
-
-#notes
-# add note that users in private will get only messages came after his join timestamps
-# users in global get all messages ever written
-# broadcast is for users that connect to the same room so they will fetch messages real-time instead of fetching from db
 

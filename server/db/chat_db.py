@@ -1,19 +1,17 @@
 import os
-import sqlite3
-import time
-import typing
 import socket
-
-from server.server_config import ServerConfig
-
-# from datetime import datetime, timedelta
-# from server.config import ServerConfig
+import sqlite3
+import typing
+from utils import MessageInfo
 
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
 
+class ChatDBConfig:
+    db_path: str = os.path.join(os.path.dirname(__file__), 'db', 'chat.db')
+
 class ChatDB:
     def __init__(self):
-        self.db_path = ServerConfig.db_path
+        self.db_path = ChatDBConfig.db_path
 
     def setup_database(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -79,14 +77,16 @@ class ChatDB:
                   ORDER BY timestamp ASC
                   ''', (room_id,))
 
+        print(f"fetch : {cursor.fetchall()} ")
         if old_messages := cursor.fetchall():
+            print("old messages section")
             for text_message, sender_id, timestamp in old_messages:
-                old_msg_sender = ChatDB.get_sender_name_from_users(sender_id=sender_id, cursor=cursor)
-                final_msg = ServerConfig.message_pattern.format(
-                    msg_timestamp=timestamp, sender_name=old_msg_sender, message=text_message
-                )
-                conn.send(final_msg.encode('utf-8'))
-                time.sleep(0.01)
+                 old_msg_sender = ChatDB.get_sender_name_from_users(sender_id=sender_id, cursor=cursor)
+                 msg = MessageInfo(text_message=text_message, sender_name=old_msg_sender, msg_timestamp=timestamp)
+                 print(f"msg {msg}")
+                 conn.send(msg.formatted_msg().encode('utf-8'))
+                #sleep?
+
         else:
             conn.send("No messages in this chat yet ...".encode('utf-8'))
 
@@ -145,44 +145,25 @@ class ChatDB:
         return cursor.fetchone()[0]
 
     @staticmethod
-    def get_sender_name_from_users(*, sender_id: int , cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist
+    def get_sender_name_from_users(*, sender_id: int , cursor) -> str:  # check if I need to validate return value not None else raise ValueError don't exist
         cursor.execute('SELECT username FROM users where id = ?', (sender_id,))
         return cursor.fetchone()[0]
 
     @staticmethod
-    def get_room_id_from_rooms(*, room_name: str, cursor) -> int:   #CHECK cursor type
-        print(f"cursor type {type(cursor)}")
+    def get_room_id_from_rooms(*, room_name: str, cursor: sqlite3.Cursor) -> int:
         cursor.execute('SELECT id FROM rooms WHERE room_name = ?', (room_name,))
         return cursor.fetchone()[0]
 
-
 def main():
-    ...
-    # chat_db = ChatDB(db_path=ServerConfig.db_path)
-    # chat_db.setup_database()
+    db = sqlite3.connect(ChatDBConfig.db_path)
+    cursor = db.cursor()
 
-    # sqlite3.register_adapter(datetime , lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S"))
-    # sqlite3.register_converter("DATETIME", lambda s: datetime.datetime.strptime(s.decode(), "%Y-%m-%d %H:%M:%S"))
-    #
-    # db = sqlite3.connect('chat.db')
-    # cursor = db.cursor()
-    # ChatDB.setup_database()
-    #
-    # cursor.execute('''
-    #           SELECT text_message, sender_id, timestamp FROM messages
-    #            WHERE room_id = ?
-    #            AND timestamp > ?
-    #            ORDER BY timestamp ASC
-    #            ''', (1, datetime.now() - timedelta(hours=2)))
-    #
-    # if old_messages := cursor.fetchall():
-    #     for text_message, sender_id, timestamp in old_messages:
-    #         old_msg_sender = ChatDB.get_user_name_from_users(sender_id, cursor)
-    #         final_msg = f"[{timestamp}] [{old_msg_sender}]: {text_message}"
-    #         print(final_msg)
-    #         time.sleep(0.01)
-    # else:
-    #     print("No messages in this chat yet ...".encode('utf-8'))
+    cursor.execute('''
+              SELECT text_message, sender_id, timestamp FROM messages
+               WHERE room_id = ? 
+               ORDER BY timestamp ASC
+               ''', (10,))
+    print(cursor.fetchall())
 
 
 if __name__ == "__main__":
