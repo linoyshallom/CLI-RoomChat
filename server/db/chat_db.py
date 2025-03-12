@@ -7,7 +7,7 @@ from utils import MessageInfo
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
 
 class ChatDBConfig:
-    db_path: str = os.path.join(os.getcwd(), 'chat.db')
+    db_path: str = os.path.join(os.getcwd(),'db', 'chat.db')
 
 class ChatDB:
     def __init__(self):
@@ -122,21 +122,28 @@ class ChatDB:
         db.commit()
         db.close()
 
-    def store_file(self, *, file_path: str, file_id: str):
+    def store_file_in_files(self, *, file_path: str, file_id: str):
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
         cursor.execute('''
-            INSERT INTO messages (file_path, file_id)
-            VALUES (?,?,?,?)''', (file_path, file_id))
+            INSERT INTO files (file_path, file_id)
+            VALUES (?,?)''', (file_path, file_id))
         db.commit()
         db.close()
 
-    def file_path_by_file_id(self, *, file_id: str) -> str:
+    def file_path_by_file_id(self, *, file_id: str) -> typing.Optional[str]:
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
-        cursor.execute('SELECT file_path FROM files WHERE file_id = ?', (file_id,))
-        return cursor.fetchone()[0]
+        try:
+            cursor.execute('SELECT file_path FROM files WHERE file_id = ?', (file_id,))
+            record = cursor.fetchone()
+            if record:
+                return record[0]
+            return None
+
+        finally:
+            db.close()
 
     @staticmethod
     def get_sender_id_from_users(*, sender_name: str, cursor) -> int:  # check if I need to validate return value not None else raise ValueError don't exist

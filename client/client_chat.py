@@ -2,12 +2,13 @@ import os.path
 import re
 import socket
 import threading
+import time
 from datetime import datetime
 
 from client.client_config import ClientConfig
+from server.db.chat_db import END_HISTORY_RETRIEVAL
 from server.server_config import ServerConfig
 from utils.utils import RoomTypes, chunkify
-
 
 class InvalidInput(Exception):
     pass
@@ -23,13 +24,13 @@ class ChatClient:
 
         try:
             self.chat_socket.connect((host, ServerConfig.listening_port))
-            print(f"Successfully connected to Chat Server")
+            print(f"Client Successfully connected to Chat Server")
         except Exception as e:
             raise Exception(f"Unable to connect to server - {host}, {ServerConfig.listening_port} {repr(e)} ")
 
         try:
             self.file_socket.connect((host, ServerConfig.file_server_config.listening_port))
-            print(f"Successfully connected to File Server")
+            print(f"Client Successfully connected to File Server")
         except Exception as e:
             raise Exception(f"Unable to connect to server - {host}, {ServerConfig.file_server_config.listening_port} {repr(e)} ")
 
@@ -63,7 +64,6 @@ class ChatClient:
                     received_thread = threading.Thread(target=self._receive_message, daemon=True)
                     received_thread.start()
 
-                    # self.chat_socket.send(f"Joined {chosen_room} {group_name}".encode('utf-8'))  # send to server so it send to all the connected - cant separate the pattern of this to regular messages
                     # print(f"\n you Joined {chosen_room} {group_name}")
 
                     self.received_history_flag.wait() #waiting this to be set before sending a message, so after one messages I receive
@@ -78,7 +78,7 @@ class ChatClient:
         while True:
             try:
                 if msg := self.chat_socket.recv(2048).decode('utf-8'):
-                    if msg == 'END_HISTORY_RETRIEVAL':  #save it as a const variable somewhere accesses here and in db file
+                    if msg == END_HISTORY_RETRIEVAL:
                         self.received_history_flag.set()
                         self.receive_message_flag.set()
                         continue
@@ -87,7 +87,6 @@ class ChatClient:
                     self.receive_message_flag.set()
 
             except Exception as e:
-                # Ensure conn.recv() doesn’t block forever (consider adding a timeout if needed).
                 self.chat_socket.close()
                 raise f"Cannot receiving messages... \n {repr(e)}"
 
@@ -96,9 +95,8 @@ class ChatClient:
         self.received_history_flag.wait()
 
         while True:
-            if self.receive_message_flag.wait(1.5): #change to 2
+            if self.receive_message_flag.wait(1.5):
                 msg = input(f"\n Enter your message : ")
-
             else:
                 msg = input(f"Enter your message :  ") #still send a message if flag wasn't set
 
@@ -110,52 +108,57 @@ class ChatClient:
                         self._choose_room()
 
                     elif msg.startswith('/file'):
-                        file_path = msg.split()[1]  # pythonic
-                        if os.path.isfile(file_path):
-                            self.file_socket.send("UPLOAD".encode('utf-8'))
-                            self.upload_file_to_server(file_path=file_path)
-                            file_id = self._get_generated_file_id()
-                            self.chat_socket.send(file_id.encode('utf-8'))  #CHECK send file id to messages table
+                        print(f"\n Uploading file ...")
+                        file_path_from_msg = msg.split()[1]
+
+                        if os.path.isfile(file_path_from_msg):
+                            self.send_file_to_file_server(file_path=file_path_from_msg) # todo add flag instead sleep?
+                            file_id = self._get_file_id()
+                            self.chat_socket.send(file_id.encode('utf-8'))
+                        else:
+                            print(f"{file_path_from_msg} isn't a proper file, try again ")
 
                     elif msg.startswith('/download'):
+                        print(f"\n Downloading file ...")
                         self.file_socket.send("DOWNLOAD".encode('utf-8'))
+
                         file_id = msg.split()[1]
-                        user_dst_path= msg.split()[2]
+                        time.sleep(0.01)
+
                         self.file_socket.send(file_id.encode('utf-8'))
-                        self.file_socket.send(user_dst_path.encode('utf-8'))
+                        if user_dir_dst_path := msg.split()[2]:   #todo if got no dst path then download to default path
+                            self.file_socket.send(user_dir_dst_path.encode('utf-8'))
 
                     else:
                         self.chat_socket.send(msg.encode('utf-8'))
 
-                    #block writing before receiving again
-                    self.receive_message_flag.clear()
+                    self.receive_message_flag.clear() #block writing before receiving again
 
                 else:
-                    #CHECK
-                    print("you entered an empty message")
+                    print("An empy message could not be sent ...")
 
             except Exception as e:
-                raise f"Error sending message: {repr(e)}"
+                raise f"Sending message error occurs: {repr(e)}"
 
-    def upload_file_to_server(self, *, file_path: str):
+    def send_file_to_file_server(self, *, file_path: str):
         try:
+            self.file_socket.send("UPLOAD".encode('utf-8'))
             filename = os.path.basename(file_path)
-            file_size = os.path.getsize(file_path)
-
             self.file_socket.send(filename.encode('utf-8'))
-            self.file_socket.send(str(file_size).encode('utf-8'))
 
+            time.sleep(0.01)
             with open(file_path, 'rb') as file:
-                for chunk in chunkify(reader_file=file):
+                for chunk in chunkify(reader_file=file, chunk_size=1024):
                     self.file_socket.send(chunk)
 
         except Exception as e:
             print(f"Error uploading file: {e}")
 
-    def _get_generated_file_id(self) -> str:
-        file_id = self.file_socket.recv(1024).decode()
-        print(f"file {file_id} is uploaded successfully! , now people can download it")
-        return file_id
+    def _get_file_id(self) -> str:  #todo should be thread that listen to file server?
+        while True:
+            file_id = self.file_socket.recv(1024).decode()
+            print(f"file {file_id} is uploaded successfully!")
+            return file_id
 
     @staticmethod
     def _user_input_validation(*, username):
@@ -171,7 +174,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-#todo validate path, add return value?
-#todo File Transfer - needs to occurs parallel so maybe thread of transfer and other of the chat management

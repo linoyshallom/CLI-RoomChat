@@ -31,17 +31,14 @@ class ChatServer:
 
     def client_handler(self, conn: socket.socket):
         sender_name = conn.recv(1024).decode('utf-8')
-        print(f"Got username {sender_name}")
         self.chat_db.store_user(sender_name=sender_name.strip())
 
         client_info = ClientInfo(client_conn=conn, username=sender_name)
 
-        print(f"start setup")
         room_setup_thread = threading.Thread(target=self._room_setup, args=(conn, client_info))
         room_setup_thread.start()
 
         #listen for massages after setup
-        print("start listen")
         received_messages_thread = threading.Thread(target=self._receiving_messages, args=(conn, client_info,)) #get client info?
         received_messages_thread.start()
 
@@ -53,7 +50,6 @@ class ChatServer:
                 group_name = conn.recv(1024).decode('utf-8')
                 user_join_timestamp = conn.recv(1024).decode('utf-8')
                 client_info.user_joined_timestamp = user_join_timestamp
-                print(f"user join to room timestamp {user_join_timestamp}")
 
                 self.chat_db.create_room(room_name=group_name)
                 self.chat_db.send_previous_messages_in_room(conn=client_info.client_conn, room_name=group_name, join_timestamp=user_join_timestamp)
@@ -81,8 +77,7 @@ class ChatServer:
 
                 if msg := conn.recv(2048).decode('utf-8'):
                     if msg == '/switch':
-                        self.room_setup_done_flag.clear() #clear set so all messages send to the setup from this time
-                        print(f"clear setup flag ")
+                        self.room_setup_done_flag.clear()
 
                         self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
 
@@ -119,8 +114,7 @@ class ChatServer:
                 if client.current_room == current_room:
                     msg = msg.formatted_msg() if format_msg else msg.text_message
                     client.client_conn.send(msg.encode('utf-8'))
-
-                print(f"send to {client.username}")
+                print(f"send msg to {client.username}")
 
     def _remove_client_in_current_room(self, *, current_room: str, sender_username: str):
         self.room_name_to_active_clients[current_room] = [client for client in self.room_name_to_active_clients[current_room]
@@ -136,16 +130,16 @@ class ChatServer:
 
 def main():
     chat_server = ChatServer(host='127.0.0.1', listen_port=ServerConfig.listening_port)
-    file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=ServerConfig.file_server_config.listening_port)
+    # file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=ServerConfig.file_server_config.listening_port)
 
     chat_server_thread = threading.Thread(target=chat_server.start, daemon=True)
     chat_server_thread.start()
 
-    file_server_thread = threading.Thread(target=file_transfer_server.start, daemon=True)
-    file_server_thread.start()
+    # file_server_thread = threading.Thread(target=file_transfer_server.start, daemon=True)
+    # file_server_thread.start()
 
     chat_server_thread.join()
-    file_server_thread.join()
+    # file_server_thread.join()
 
 
 if __name__ == '__main__':
@@ -153,7 +147,6 @@ if __name__ == '__main__':
 
 
 # todo add some ttl if x not happens in x time
-# todo use threadPoolExecutor to chat server
 # todo thread = threading.Thread(target=self.client_handler, kwargs={"conn":client_sock})  is it better?
 
 

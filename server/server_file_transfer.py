@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from server.db.chat_db import ChatDB
 from utils import chunkify
-#use logging for see what occurs
 
 class UploadFileError(Exception):
     pass
@@ -20,7 +19,8 @@ class FileServerConfig:
     listening_port: int = 78
     listener_limit_number: int = 5
     max_file_size: int = 16_000_000
-    upload_dir_dst_path: str = r"C:\Users\shalo\Documents\Uploads"  #environment variable?
+    upload_dir_dst_path: str = r"C:\Users\Administrator\Desktop\Uploads"  #todo environment variable so we can run in any computer
+    download_dir_dst_path: str = r"C:\Users\Administrator\Downloads"
     max_threads_number: int = 7
 
 class FileTransferServer:
@@ -37,7 +37,8 @@ class FileTransferServer:
         self.chat_db = ChatDB()
 
     def file_handler(self, conn):
-        command = conn.rcev(1024).decode()
+        command = conn.recv(1024).decode()
+        print(f"file server got {command}")
         if command == "UPLOAD":
             upload_thread = threading.Thread(target=self._upload_file, args=(conn,))
             upload_thread.start()
@@ -48,56 +49,61 @@ class FileTransferServer:
 
 
     def _upload_file(self, conn):
+        file_size = 0
         while True:
-            print(f"got into upload file")
             file_name = conn.recv(1024).decode()
-
-            file_id = self._generate_file_id(file_name=file_name)
-            conn.send(file_id.encode('utf-8'))
 
             try:
                 os.makedirs(os.path.dirname(FileServerConfig.upload_dir_dst_path), exist_ok=True)
             except Exception as e:
                 raise UploadFileError("Upload failed, failed to create Uploads dir") from e
 
+            file_id = self._generate_file_id(file_name=file_name)
+
             upload_file_path = os.path.join(FileServerConfig.upload_dir_dst_path, file_id)
-            self.chat_db.store_file(file_path=upload_file_path, file_id=file_id)
 
-            self._save_file(upload_file_path=upload_file_path)
+            try:
+                with open(upload_file_path, 'wb') as file:
+                    if chunk := conn.recv(1024):
+                        file_size += len(chunk)
 
-    def _download_file(self, *, conn):
-        print(f"got into download file")
-        file_id = conn.rcev(1024).decode()
-        upload_file_path = self.chat_db.file_path_by_file_id(file_id=file_id)
+                        if file_size > FileServerConfig.max_file_size:
+                            raise UploadFileError("Upload failed, file size exceeded")
 
-        user_dst_path = conn.rcev(1024).decode()
+                        file.write(chunk)
 
-        try:
-            with open(upload_file_path, 'rb') as src_file, open(user_dst_path, 'wb') as dst_file:
-                for chunk in chunkify(reader_file=src_file):
-                    dst_file.write(chunk)
+            except Exception as e:
+                raise UploadFileError(f"Failed write to {upload_file_path}") from e
 
-        except Exception as e:
-            raise DownloadFileError(f"Failed to download {file_id}") from e
+            print("store file in files")
+            self.chat_db.store_file_in_files(file_path=upload_file_path, file_id=file_id)
 
-    @staticmethod
-    def _save_file(*, upload_file_path: str):
-        file_size = 0
-        try:
-            with open(upload_file_path, 'wb') as file:
-                if file_size >= FileServerConfig.max_file_size:
-                    raise UploadFileError("Upload failed, file size exceeded")
+            conn.send(file_id.encode('utf-8')) #only when upload succeed
 
-                for chunk in chunkify(reader_file=file):
-                    file.write(chunk)
-                    file_size += len(chunk)
+    def _download_file(self, conn):
+        while True:
+            file_id = conn.recv(1024).decode()
+            user_dir_dst_path = conn.recv(1024).decode()
 
-        except Exception as e:
-            raise UploadFileError(f"Failed to write to {upload_file_path}") from e
+            if not user_dir_dst_path:
+                user_dir_dst_path = FileServerConfig.download_dir_dst_path  #not working
+
+            os.makedirs(os.path.dirname(user_dir_dst_path), exist_ok=True)
+
+            if uploaded_file_path := self.chat_db.file_path_by_file_id(file_id=file_id):
+                file_name = os.path.basename(uploaded_file_path).split('_')[2]
+                try:
+                    with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path,file_name), 'wb') as dst_file:
+                        for chunk in chunkify(reader_file=src_file):
+                            dst_file.write(chunk)
+                except Exception as e:
+                    raise DownloadFileError(f"Failed to download {file_id}") from e
+            else:
+                print(f"Failed to download, file id {file_id} doesn't exist, so cannot be downloaded") #send to client
 
     @staticmethod
     def _generate_file_id(*, file_name: str) -> str:
-        return f"{uuid.uuid4()}_{file_name}"
+        return f"file_{uuid.uuid4()}_{file_name}"
 
     def start(self):
         print("File Server started...")
@@ -106,3 +112,19 @@ class FileTransferServer:
                 client_sock, addr = self.file_server.accept()
                 print(f"Successfully connected client {addr[0]} {addr[1]} to files server \n")
                 executor.submit(self.file_handler, client_sock)
+
+def main():
+    file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=FileServerConfig.listening_port)
+
+    file_server_thread = threading.Thread(target=file_transfer_server.start, daemon=True)
+    file_server_thread.start()
+    file_server_thread.join()
+
+if __name__ == "__main__":
+    main()
+
+
+
+#todo const command to this
+#todo find away to access the correct function
+#todo dedicated listnerner in client from files server?
