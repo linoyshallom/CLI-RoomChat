@@ -9,5 +9,5 @@ class ServerConfig:
     listening_port: int = 6
     max_threads_number: int = 7
     file_server_config: FileServerConfig()= FileServerConfig
-    #host server also in config?
+    #todo ip host server also in this config?
 

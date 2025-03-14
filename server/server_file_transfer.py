@@ -6,7 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from server.db.chat_db import ChatDB
-from utils import chunkify
+from utils import chunkifyt
 
 class UploadFileError(Exception):
     pass
@@ -39,7 +39,7 @@ class FileTransferServer:
     def file_handler(self, conn):
         command = conn.recv(1024).decode()
         print(f"file server got {command}")
-        if command == "UPLOAD":
+        if command == "UPLOAD":     #todo change this way to initiate threads?
             upload_thread = threading.Thread(target=self._upload_file, args=(conn,))
             upload_thread.start()
 
@@ -113,12 +113,13 @@ class FileTransferServer:
                 client_sock, addr = self.file_server.accept()
                 print(f"Successfully connected client {addr[0]} {addr[1]} to files server \n")
                 executor.submit(self.file_handler, client_sock)
-"fd".rsplit()
+
 def main():
     file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=FileServerConfig.listening_port)
 
     file_server_thread = threading.Thread(target=file_transfer_server.start, daemon=True)
     file_server_thread.start()
+
     file_server_thread.join()
 
 if __name__ == "__main__":
@@ -126,12 +127,8 @@ if __name__ == "__main__":
 
 
 
-#todo const command to UPLOAD and DOWNLOAD
-# check file exceeded
-# servers execution in one place
-# images, pdf and more transfers ..
-# environment variables for paths
+#todo const command to UPLOAD and DOWNLOAD ?
+# servers execution should be in one place ?
+# binary files like images, pdf uploaded and downloaded wired  ..
 # is logic supports 2 parallel
-# non increment id in tables
-# logging file?
-# black
+# should i have logger logging file?

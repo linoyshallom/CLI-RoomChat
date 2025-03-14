@@ -26,7 +26,7 @@ class MessageInfo:
     def formatted_msg(self) -> str:
         return f"[{self.msg_timestamp}] [{self.sender_name}]: {self.text_message}"
 
-#todo instead utils rename to common and add structs file
+#todo instead utils add to common folder and add structs file?
 
 def chunkify(*, reader_file: IO[bytes], chunk_size: typing.Optional[int] = 65_536) -> typing.Generator[bytes, None, None]:
     while True:

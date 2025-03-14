@@ -11,7 +11,7 @@ from utils import RoomTypes, ClientInfo, MessageInfo
 
 
 class ChatServer:
-    def __init__(self, *, host, listen_port):   #should be init class or not?
+    def __init__(self, *, host, listen_port):   #todo should be init class or not?
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             self.server.bind((host, listen_port))
@@ -60,20 +60,18 @@ class ChatServer:
                     room_name=group_name
                 )
 
-                # If room still not exist , then add to checkins
+                # If room still not exist , then add to checkins table
                 if not room_id:
-                    print(f"room doesnt exist yet but creating ")
                     self.chat_db.create_room(room_name=group_name)
                     user_join_timestamp = received_user_join_timestamp
                     self.chat_db.create_user_checkin_room(sender_name=client_info.username, room_name=group_name, join_timestamp=user_join_timestamp)
 
                 # If room exists but user haven't checkin to this room yet
                 if not user_join_timestamp:
-                    print(f"user haven't checkin to this room yet ")
                     user_join_timestamp = received_user_join_timestamp
                     self.chat_db.create_user_checkin_room(sender_name=client_info.username, room_name=group_name, join_timestamp=user_join_timestamp)
 
-                # Users in private will get only messages came after their joining group timestamp
+                # Users in private rooms will get only messages came after their first joining group timestamp
                 self.chat_db.send_previous_messages_in_room(conn=client_info.client_conn,
                                                             room_name=group_name,
                                                             join_timestamp=user_join_timestamp)
@@ -133,7 +131,7 @@ class ChatServer:
     def _broadcast_to_all_active_clients_in_room(self, *, msg: MessageInfo, current_room: str, format_msg: bool):
         '''
         clients who are connected to the current room gets messages in real-time, and clients
-        connected to another room will fetch the messages form db while joining .
+        connected to another room will fetch the messages from db while joining .
         '''
         if clients_in_room := self.room_name_to_active_clients.get(current_room):
             for client in clients_in_room:

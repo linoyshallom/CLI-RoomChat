@@ -3,6 +3,7 @@ import socket
 import sqlite3
 import time
 import typing
+
 from utils import MessageInfo
 
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
