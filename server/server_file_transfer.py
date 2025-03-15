@@ -6,7 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from server.db.chat_db import ChatDB
-from utils import chunkifyt
+from utils import chunkify
 
 class UploadFileError(Exception):
     pass

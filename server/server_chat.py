@@ -81,7 +81,6 @@ class ChatServer:
                 self.chat_db.create_room(room_name=group_name)
                 self.chat_db.send_previous_messages_in_room(conn=client_info.client_conn, room_name=group_name)
 
-
             client_info.room_type = room_type
             client_info.current_room = group_name
             self.room_name_to_active_clients[group_name].append(client_info)
