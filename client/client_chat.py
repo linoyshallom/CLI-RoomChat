@@ -135,98 +135,98 @@ class ClientUI:
             self.add_message(msg)
             self.render()
 
+class Client:
+    def __init__(self, host, port):
+        self.message_client = MessageClient(host=..., port=...)
+        self.file_client = FileClient(host=..., port=...)
+        self.ui = ClientUI(max_history_size=100)
 
-def main():
-    message_client = MessageClient(host=..., port=...)
-    file_client = FileClient(host=..., port= ...)
-    ui = ClientUI(max_history_size=100)
+    def main(self):
+        username = input("Enter your username:")
+        self.message_client.message_socket.send(username.encode('utf-8'))
 
-    username = input("Enter your username:")
-    message_client.message_socket.send(username.encode('utf-8'))
-
-
-    with ThreadPoolExecutor(...) as background_threads:
-        background_threads.submit(...)  # Start a thread that calls draw_ui() forever
-
-        while True:
-            # Ask user to choose room
-             print(f"\n Available rooms to chat:")
-             for room in RoomTypes:
-                 print(f"- {room.value}")
-
-             chosen_room = input("Enter room type: ").strip().upper()
-             message_client.enter_room(room_name=chosen_room)
-
-             message_client.stop_event.set() #?? Stop the previous "receiver" thread and wait for it to stop
-             ui.clear_history()
-
-             background_threads.submit(ui.start_receiving, message_client)  # Start a "receiver" thread that receives messages and adds them to ClientUI
+        with ThreadPoolExecutor(...) as background_threads:
+            background_threads.submit(...)  # Start a thread that calls draw_ui() forever
 
             while True:
-                # Ask user to enter message. The prompt should be displayed in an area in the CLI window that cannot be reached by ClientUI, which is shitty but possible using `curses` library (ask chatgpt)
-                msg = input(f"Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
+                # Ask user to choose room
+                 print(f"\n Available rooms to chat:")
+                 for room in RoomTypes:
+                     print(f"- {room.value}")
 
-                try:
-                    if msg:
-                        if msg.lower() == "/switch":
-                            message_client.message_socket.send(msg.encode('utf-8'))
-                            break
+                 chosen_room = input("Enter room type: ").strip().upper()
+                 self.message_client.enter_room(room_name=chosen_room)
 
-                        elif msg.startswith("/file"):
-                            print(f"\n Uploading file ...")
+                 self.message_client.stop_event.set() #?? Stop the previous "receiver" thread and wait for it to stop
+                 self.ui.clear_history()
 
-                            if len(msg.split(' ', 1)) != 2:
-                                print(" No file path provided. Usage: /file <path>")
+                 background_threads.submit(self.ui.start_receiving, self.message_client)  # Start a "receiver" thread that receives messages and adds them to ClientUI
+
+                while True:
+                    # Ask user to enter message. The prompt should be displayed in an area in the CLI window that cannot be reached by ClientUI, which is shitty but possible using `curses` library (ask chatgpt)
+                    msg = input(f"Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
+
+                    try:
+                        if msg:
+                            if msg.lower() == "/switch":
+                                self.message_client.message_socket.send(msg.encode('utf-8'))
+                                break
+
+                            elif msg.startswith("/file"):
+                                print(f"\n Uploading file ...")
+
+                                if len(msg.split(' ', 1)) != 2:
+                                    print(" No file path provided. Usage: /file <path>")
+                                    continue
+
+                                file_path_from_msg = msg.split(' ', 1)[1]
+
+                                if os.path.isfile(file_path_from_msg):
+                                    file_client(file_path=file_path_from_msg)
+
+                                    file_id = self._get_file_id()
+                                    self.message_socket.send(file_id.encode('utf-8'))
+                                    self.ui.add_messa
+                                else:
+                                    print(f"{file_path_from_msg} isn't a proper file, try again ")
+
+                            elif msg.startswith("/download"):
+                                print(f"\n Downloading file ...")
+                                self.file_socket.send("DOWNLOAD".encode('utf-8'))
+
+                                if len(msg.split()) != 3:
+                                    print(
+                                        " You should provide link file and destination path , Usage: /download <link_file> <dst_path>")
+                                    continue
+
+                                file_id = msg.split()[1]
+                                user_dir_dst_path = msg.split()[2]
+
+                                print(f"file id {file_id}")
+                                time.sleep(0.01)
+                                self.file_socket.send(file_id.encode('utf-8'))
+                                self.file_socket.send(user_dir_dst_path.encode('utf-8'))
+
+                                response = self._response_from_server()  # LIELREVIEW:  Func name should be a verb. _get_response_from_server
+                                print(response)  # LIELREVIEW:  You are printing the file? probably better to save it somewhere no?
                                 continue
 
-                            file_path_from_msg = msg.split(' ', 1)[1]
-
-                            if os.path.isfile(file_path_from_msg):
-                                file_client(file_path=file_path_from_msg)
-
-                                file_id = self._get_file_id()
-                                self.message_socket.send(file_id.encode('utf-8'))
-                                ui.add_messa
                             else:
-                                print(f"{file_path_from_msg} isn't a proper file, try again ")
-
-                        elif msg.startswith("/download"):
-                            print(f"\n Downloading file ...")
-                            self.file_socket.send("DOWNLOAD".encode('utf-8'))
-
-                            if len(msg.split()) != 3:
-                                print(
-                                    " You should provide link file and destination path , Usage: /download <link_file> <dst_path>")
-                                continue
-
-                            file_id = msg.split()[1]
-                            user_dir_dst_path = msg.split()[2]
-
-                            print(f"file id {file_id}")
-                            time.sleep(0.01)
-                            self.file_socket.send(file_id.encode('utf-8'))
-                            self.file_socket.send(user_dir_dst_path.encode('utf-8'))
-
-                            response = self._response_from_server()  # LIELREVIEW:  Func name should be a verb. _get_response_from_server
-                            print(response)  # LIELREVIEW:  You are printing the file? probably better to save it somewhere no?
-                            continue
+                                self.chat_socket.send(msg.encode('utf-8'))
 
                         else:
-                            self.chat_socket.send(msg.encode('utf-8'))
-
-                    else:
-                        print("An empy message could not be sent ...")
+                            print("An empy message could not be sent ...")
 
 
-            #     if < is upload file >
-            #     client.add_message(...)
-            #     background_threads.submit(...)  # Submit task that uploads file
-            #
-            # if < is download file >
-            # client.add_message(..)
-            # background_threads.submit(...)  # Submit task that downloads file
-            #
-            #
+                #     if < is upload file >
+                #     client.add_message(...)
+                #     background_threads.submit(...)  # Submit task that uploads file
+                #
+                # if < is download file >
+                # client.add_message(..)
+                # background_threads.submit(...)  # Submit task that downloads file
+                #
+                #
 
 
 
@@ -408,8 +408,8 @@ def main():
 #             raise InvalidInput("Input username is empty")
 
 
-def main():
-    _ = ChatClient(host='127.0.0.1')
+# def main():
+#     _ = ChatClient(host='127.0.0.1')
 
 if __name__ == '__main__':
     main()
