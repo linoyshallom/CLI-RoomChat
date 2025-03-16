@@ -3,11 +3,11 @@ import threading
 import typing
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+import datetime
 
 from server.db.chat_db import ChatDB
 from server.server_config import ServerConfig
-from utils import RoomTypes, ClientInfo, MessageInfo
+from utils import RoomTypes, ClientInfo, MessageInfo, MessageTypes
 
 
 class ChatServer:
@@ -30,6 +30,7 @@ class ChatServer:
 
     def client_handler(self, conn: socket.socket):
         sender_name = conn.recv(1024).decode('utf-8')
+        print(f"server got username {sender_name}")
         self.chat_db.store_user(sender_name=sender_name.strip())
 
         client_info = ClientInfo(client_conn=conn, username=sender_name)
@@ -47,11 +48,9 @@ class ChatServer:
             print(f"room type {room_type}")
 
             if RoomTypes[room_type.upper()] == RoomTypes.PRIVATE:
+                join_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 group_name = conn.recv(1024).decode('utf-8')
                 print(f"group name {group_name}")
-
-                received_user_join_timestamp = conn.recv(1024).decode('utf-8')
-                print(f"time stamp {group_name}")
 
                 room_id = self.chat_db.get_room_id_from_rooms(room_name=group_name)
 
@@ -63,12 +62,12 @@ class ChatServer:
                 # If room still not exist , then add to checkins table
                 if not room_id:
                     self.chat_db.create_room(room_name=group_name)
-                    user_join_timestamp = received_user_join_timestamp
+                    user_join_timestamp = join_timestamp
                     self.chat_db.create_user_checkin_room(sender_name=client_info.username, room_name=group_name, join_timestamp=user_join_timestamp)
 
                 # If room exists but user haven't checkin to this room yet
                 if not user_join_timestamp:
-                    user_join_timestamp = received_user_join_timestamp
+                    user_join_timestamp = join_timestamp
                     self.chat_db.create_user_checkin_room(sender_name=client_info.username, room_name=group_name, join_timestamp=user_join_timestamp)
 
                 # Users in private rooms will get only messages came after their first joining group timestamp
@@ -86,7 +85,7 @@ class ChatServer:
             self.room_name_to_active_clients[group_name].append(client_info)
             print(f"mapping {self.room_name_to_active_clients}")
 
-            msg_obj = MessageInfo(text_message=f"{client_info.username} joined {group_name}")
+            msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} joined {group_name}")
             print(f"joining msg {msg_obj.text_message}")
             self._broadcast_to_all_active_clients_in_room(msg=msg_obj, current_room=client_info.current_room, format_msg=False)
 
@@ -104,7 +103,7 @@ class ChatServer:
 
                         self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
 
-                        msg_obj = MessageInfo(text_message=f"{client_info.username} left {client_info.current_room}")
+                        msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} left {client_info.current_room}")
                         self._broadcast_to_all_active_clients_in_room(
                             msg= msg_obj,
                             current_room=client_info.current_room,
@@ -116,8 +115,8 @@ class ChatServer:
 
                     else:
                         print(f"got message {msg}")
-                        msg_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        msg_obj = MessageInfo(text_message=msg, sender_name=client_info.username, msg_timestamp=msg_timestamp)
+                        msg_timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        msg_obj = MessageInfo(type=MessageTypes.CHAT, text_message=msg, sender_name=client_info.username, msg_timestamp=msg_timestamp)
 
                         self._broadcast_to_all_active_clients_in_room(
                             msg=msg_obj,
@@ -148,7 +147,7 @@ class ChatServer:
     def start(self):
         print("Chat Server started...")
         while True:
-            with ThreadPoolExecutor(max_workers=ServerConfig.max_threads_number) as executor:
+            with ThreadPoolExecutor(max_workers=1) as executor:  #check why got 2 messages of this print first when connected and then when server got username
                 client_sock, addr = self.server.accept()
                 print(f"Successfully connected client {addr[0]} {addr[1]} to messages server\n")
                 executor.submit(self.client_handler, client_sock)

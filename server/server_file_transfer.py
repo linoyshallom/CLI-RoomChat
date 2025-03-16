@@ -14,6 +14,9 @@ class UploadFileError(Exception):
 class DownloadFileError(Exception):
     pass
 
+class FileIdNotFound(Exception):
+    pass
+
 @dataclasses.dataclass(frozen=True)
 class FileServerConfig:
     listening_port: int = 78
@@ -39,7 +42,7 @@ class FileTransferServer:
     def file_handler(self, conn):
         command = conn.recv(1024).decode()
         print(f"file server got {command}")
-        if command == "UPLOAD":     #todo change this way to initiate threads?
+        if command == "UPLOAD":
             upload_thread = threading.Thread(target=self._upload_file, args=(conn,))
             upload_thread.start()
 
@@ -81,26 +84,24 @@ class FileTransferServer:
     def _download_file(self, conn):
         while True:
             file_id = conn.recv(1024).decode()
-            print(file_id)
+            print(f"file_id {file_id}")
             user_dir_dst_path = conn.recv(1024).decode().strip()
             print(f"dit path {user_dir_dst_path}")
 
-            if uploaded_file_path := self.chat_db.file_path_by_file_id(file_id=file_id):
+            if uploaded_file_path := self.chat_db.get_file_path_by_file_id(file_id=file_id):
                 file_name = os.path.basename(uploaded_file_path).rsplit('-',1)[1]
                 print(f" file name {file_name}")
+
                 try:
                     with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path,file_name), 'wb') as dst_file:
                         for chunk in chunkify(reader_file=src_file):
                             dst_file.write(chunk)
-                    print(" file is downloaded successfully!")
-                    conn.send(" file is downloaded successfully!".encode('utf8'))
 
                 except Exception as e:
                     raise DownloadFileError(f"Failed to download {file_id}") from e
             else:
-                print(f"Failed to download, file id {file_id} doesn't exist, so cannot be downloaded")
-                conn.send(f"Failed to download, file id {file_id} doesn't exist, so cannot be downloaded".encode('utf-8')) #send to client
-                return
+                raise FileIdNotFound(f"Failed to download")
+
 
     @staticmethod
     def _generate_file_id(*, file_name: str) -> str:
@@ -132,3 +133,4 @@ if __name__ == "__main__":
 # binary files like images, pdf uploaded and downloaded wired  ..
 # is logic supports 2 parallel
 # should i have logger logging file?
+# create errors.py file so client wont import from server

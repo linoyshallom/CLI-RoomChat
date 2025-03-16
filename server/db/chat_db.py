@@ -4,7 +4,7 @@ import sqlite3
 import time
 import typing
 
-from utils import MessageInfo
+from utils import MessageInfo, MessageTypes
 
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
 
@@ -75,6 +75,7 @@ class ChatDB:
         cursor = db.cursor()
 
         room_id = self.get_room_id_from_rooms(room_name=room_name)
+        print(f"room id in previous : {room_id}")
 
         if join_timestamp:
             cursor.execute('''
@@ -94,7 +95,7 @@ class ChatDB:
         if old_messages := cursor.fetchall():
             for text_message, sender_id, timestamp in old_messages:
                  old_msg_sender = self.get_sender_name_from_users(sender_id=sender_id, cursor=cursor)
-                 msg = MessageInfo(text_message=text_message, sender_name=old_msg_sender, msg_timestamp=timestamp)
+                 msg = MessageInfo(type=MessageTypes.CHAT,text_message=text_message, sender_name=old_msg_sender, msg_timestamp=timestamp)
                  print(f"msg {msg}")
                  conn.send(msg.formatted_msg().encode('utf-8'))
                  time.sleep(0.01) #can send END_HISTORY_RETRIEVAL in the same line as old msg
@@ -184,7 +185,7 @@ class ChatDB:
         db.commit()
         db.close()
 
-    def file_path_by_file_id(self, *, file_id: str) -> typing.Optional[str]:
+    def get_file_path_by_file_id(self, *, file_id: str) -> typing.Optional[str]:
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
         try:
