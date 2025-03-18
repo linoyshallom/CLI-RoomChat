@@ -1,2 +1,1 @@
-from client.client_chat import MessageClient
-from client.client_config import ClientConfig
+from client.client import MessageClient

@@ -1,12 +1,16 @@
-import dataclasses
+import json
 import os
 import socket
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+from config.config import FileServerConfig
+from definitions.structs import UploadFileData, DownloadFileData
+from definitions.types import FileHandlerTypes
 from server.db.chat_db import ChatDB
 from utils import chunkify
+
 
 class UploadFileError(Exception):
     pass
@@ -14,17 +18,9 @@ class UploadFileError(Exception):
 class DownloadFileError(Exception):
     pass
 
-class FileIdNotFound(Exception):
+class FileIdNotFoundError(Exception):
     pass
 
-@dataclasses.dataclass(frozen=True)
-class FileServerConfig:
-    listening_port: int = 78
-    listener_limit_number: int = 5
-    max_file_size: int = 16_000_000
-    upload_dir_dst_path: str = r"C:\Users\Administrator\Desktop\Uploads"  #todo environment variable so we can run in any computer
-    download_dir_dst_path: str = r"C:\Users\Administrator\Downloads"
-    max_threads_number: int = 7
 
 class FileTransferServer:
     def __init__(self, host, listen_port):
@@ -40,27 +36,38 @@ class FileTransferServer:
         self.chat_db = ChatDB()
 
     def file_handler(self, conn):
-        command = conn.recv(1024).decode()
-        print(f"file server got {command}")
-        if command == "UPLOAD":
-            upload_thread = threading.Thread(target=self._upload_file, args=(conn,))
+        handler = conn.recv(1024).decode()
+        print(f"handler {handler} ")
+        try:
+            handler_type = FileHandlerTypes[handler]
+        except KeyError:
+            raise Exception(f"Got unexpected handler type {handler}")   #don't catch error for some reason
+
+        json_data = conn.recv(1024).decode()
+
+        if handler_type == FileHandlerTypes.UPLOAD:
+            print("into upload")
+            upload_data = UploadFileData(**json.loads(json_data))
+
+            upload_thread = threading.Thread(target=self._upload_file, kwargs={"conn": conn, "data": upload_data})
             upload_thread.start()
 
-        if command == "DOWNLOAD":
-            download_thread = threading.Thread(target=self._download_file, kwargs={"conn":conn})
+        elif handler_type == FileHandlerTypes.DOWNLOAD:
+            download_data = DownloadFileData(**json.loads(json_data))
+
+            download_thread = threading.Thread(target=self._download_file, kwargs={"conn": conn, "data": download_data })
             download_thread.start()
 
-
-    def _upload_file(self, conn):
+    def _upload_file(self, *, conn: socket.socket, data: UploadFileData):
         file_size = 0
         while True:
-            file_name = conn.recv(1024).decode('utf-8')
+
             try:
                 os.makedirs(os.path.dirname(FileServerConfig.upload_dir_dst_path), exist_ok=True)
             except Exception as e:
                 raise UploadFileError("Upload failed, failed to create Uploads dir") from e
 
-            file_id = self._generate_file_id(file_name=file_name)
+            file_id = self._generate_file_id(file_name=data.filename)
 
             upload_file_path = os.path.join(FileServerConfig.upload_dir_dst_path, file_id)
 
@@ -79,18 +86,16 @@ class FileTransferServer:
 
             print("store file in files")
             self.chat_db.store_file_in_files(file_path=upload_file_path, file_id=file_id)
-            conn.send(file_id.encode('utf-8'))   # Only when upload succeed
+            conn.send(file_id.encode('utf-8'))
 
-    def _download_file(self, conn):
+    def _download_file(self, *, conn: socket.socket, data: DownloadFileData):
+        print("into download")
         while True:
-            file_id = conn.recv(1024).decode()
-            print(f"file_id {file_id}")
-            user_dir_dst_path = conn.recv(1024).decode().strip()
-            print(f"dit path {user_dir_dst_path}")
+            file_id = data.file_id
+            user_dir_dst_path = data.dst_path
 
             if uploaded_file_path := self.chat_db.get_file_path_by_file_id(file_id=file_id):
                 file_name = os.path.basename(uploaded_file_path).rsplit('-',1)[1]
-                print(f" file name {file_name}")
 
                 try:
                     with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path,file_name), 'wb') as dst_file:
@@ -99,9 +104,9 @@ class FileTransferServer:
 
                 except Exception as e:
                     raise DownloadFileError(f"Failed to download {file_id}") from e
-            else:
-                raise FileIdNotFound(f"Failed to download")
 
+            else:
+                raise FileIdNotFoundError(f"Failed to download")
 
     @staticmethod
     def _generate_file_id(*, file_name: str) -> str:
@@ -128,9 +133,11 @@ if __name__ == "__main__":
 
 
 
-#todo const command to UPLOAD and DOWNLOAD ?
-# servers execution should be in one place ?
+#todo servers execution should be in one place ?
 # binary files like images, pdf uploaded and downloaded wired  ..
 # is logic supports 2 parallel
-# should i have logger logging file?
-# create errors.py file so client wont import from server
+# if user want to upload file that exist in uploads i won't Writing it again !
+# set max files to store, if gets to max then i delete the oldest file
+# check maximum file size if raise exception
+# solve uploading and downloading in the same socket
+# if something failed in the server i want to allow chat anyway

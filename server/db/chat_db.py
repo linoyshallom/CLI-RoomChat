@@ -1,10 +1,9 @@
 import os
-import socket
 import sqlite3
-import time
 import typing
 
-from utils import MessageInfo, MessageTypes
+from definitions.types import MessageTypes
+from definitions.structs import MessageInfo
 
 END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
 
@@ -65,12 +64,10 @@ class ChatDB:
             );
         ''')
 
-
-
         db.commit()
         db.close()
 
-    def send_previous_messages_in_room(self, *, conn: socket.socket, room_name: str, join_timestamp: typing.Optional[str] = None):
+    def send_previous_messages_in_room(self, *, room_name: str, join_timestamp: typing.Optional[str] = None) -> typing.Generator[str, None, None]:
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -96,14 +93,10 @@ class ChatDB:
             for text_message, sender_id, timestamp in old_messages:
                  old_msg_sender = self.get_sender_name_from_users(sender_id=sender_id, cursor=cursor)
                  msg = MessageInfo(type=MessageTypes.CHAT,text_message=text_message, sender_name=old_msg_sender, msg_timestamp=timestamp)
-                 print(f"msg {msg}")
-                 conn.send(msg.formatted_msg().encode('utf-8'))
-                 time.sleep(0.01) #can send END_HISTORY_RETRIEVAL in the same line as old msg
-
+                 print(f"msgInfo in chatdb {msg}")
+                 yield msg.formatted_msg()  #if stop iteration then send the HISTORY
         else:
-            conn.send("No messages in this chat yet ...".encode('utf-8'))
-
-        conn.send(END_HISTORY_RETRIEVAL.encode())
+            return None
 
         db.close()
 
@@ -211,15 +204,6 @@ class ChatDB:
             return record[0]
 
         return None
-
-    # @staticmethod
-    # def get_room_id_from_rooms(*, room_name: str, cursor: sqlite3.Cursor) -> typing.Optional[int]:
-    #     cursor.execute('SELECT id FROM rooms WHERE room_name = ?', (room_name,))
-    #     record = cursor.fetchone()
-    #     if record:
-    #         return record[0]
-    #
-    #     return None
 
     def get_room_id_from_rooms(self, *, room_name: str) -> typing.Optional[int]:
         db = sqlite3.connect(self.db_path)
