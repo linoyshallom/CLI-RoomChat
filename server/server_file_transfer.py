@@ -37,11 +37,10 @@ class FileTransferServer:
 
     def file_handler(self, conn):
         handler = conn.recv(1024).decode()
-        print(f"handler {handler} ")
         try:
             handler_type = FileHandlerTypes[handler]
         except KeyError:
-            raise Exception(f"Got unexpected handler type {handler}")   #don't catch error for some reason
+            raise Exception(f"Got unexpected handler type {handler}")   #todo don't catch error for some reason
 
         json_data = conn.recv(1024).decode()
 
@@ -60,33 +59,31 @@ class FileTransferServer:
 
     def _upload_file(self, *, conn: socket.socket, data: UploadFileData):
         file_size = 0
-        while True:
+        file_id = self._generate_file_id(file_name=data.filename)
+        uploaded_file_path = os.path.join(FileServerConfig.upload_dir_dst_path(), file_id)
 
-            try:
-                os.makedirs(os.path.dirname(FileServerConfig.upload_dir_dst_path), exist_ok=True)
-            except Exception as e:
-                raise UploadFileError("Upload failed, failed to create Uploads dir") from e
+        try:
+            with open(uploaded_file_path, 'ab') as file:
+                while True:
+                    chunk = conn.recv(1024)
+                    print(f"chunk - {chunk}")
 
-            file_id = self._generate_file_id(file_name=data.filename)
+                    if not chunk:
+                        break
 
-            upload_file_path = os.path.join(FileServerConfig.upload_dir_dst_path, file_id)
+                    file_size += len(chunk)
+                    if file_size > FileServerConfig.max_file_size:
+                        raise UploadFileError("Upload failed, file size exceeded")
 
-            try:
-                with open(upload_file_path, 'wb') as file:
-                    if chunk := conn.recv(1024):
-                        file_size += len(chunk)
+                    file.write(chunk)
+                    print(f"writing {chunk} to file  ")
 
-                        if file_size > FileServerConfig.max_file_size:
-                            raise UploadFileError("Upload failed, file size exceeded")
+        except Exception as e:
+            raise UploadFileError(f"Failed write to {uploaded_file_path}") from e
 
-                        file.write(chunk)
-
-            except Exception as e:
-                raise UploadFileError(f"Failed write to {upload_file_path}") from e
-
-            print("store file in files")
-            self.chat_db.store_file_in_files(file_path=upload_file_path, file_id=file_id)
-            conn.send(file_id.encode('utf-8'))
+        print("store file in files")
+        self.chat_db.store_file_in_files(file_path=uploaded_file_path, file_id=file_id)
+        conn.send(file_id.encode('utf-8'))
 
     def _download_file(self, *, conn: socket.socket, data: DownloadFileData):
         print("into download")
@@ -101,6 +98,8 @@ class FileTransferServer:
                     with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path,file_name), 'wb') as dst_file:
                         for chunk in chunkify(reader_file=src_file):
                             dst_file.write(chunk)
+                    conn.send("done downloading".encode('utf-8'))
+
 
                 except Exception as e:
                     raise DownloadFileError(f"Failed to download {file_id}") from e
@@ -122,11 +121,8 @@ class FileTransferServer:
 
 def main():
     file_transfer_server = FileTransferServer(host='127.0.0.1', listen_port=FileServerConfig.listening_port)
+    file_transfer_server.start()
 
-    file_server_thread = threading.Thread(target=file_transfer_server.start, daemon=True)
-    file_server_thread.start()
-
-    file_server_thread.join()
 
 if __name__ == "__main__":
     main()
@@ -141,3 +137,5 @@ if __name__ == "__main__":
 # check maximum file size if raise exception
 # solve uploading and downloading in the same socket
 # if something failed in the server i want to allow chat anyway
+# if downloads exist maby try with (1)
+# uploading and then downloading

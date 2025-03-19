@@ -14,3 +14,5 @@ class MessageTypes(enum.Enum):
 class FileHandlerTypes(enum.Enum):
     UPLOAD = "UPLOAD"
     DOWNLOAD = "DOWNLOAD"
+
+#class FileTransferStatus: succeed, failed, notfound

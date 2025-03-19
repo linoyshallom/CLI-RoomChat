@@ -1,11 +1,12 @@
 import os
 import sqlite3
 import typing
+from logging import getLogger
 
-from definitions.types import MessageTypes
 from definitions.structs import MessageInfo
+from definitions.types import MessageTypes
 
-END_HISTORY_RETRIEVAL = "END_HISTORY_RETRIEVAL"
+logger = getLogger(__name__)
 
 class ChatDBConfig:
     db_path: str = os.path.join(os.getcwd(),'db', 'chat.db')
@@ -13,6 +14,7 @@ class ChatDBConfig:
 class ChatDB:
     def __init__(self):
         self.db_path = ChatDBConfig.db_path
+        # self.db = sqlite3.connect(self.db_path)
 
     def setup_database(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -72,7 +74,6 @@ class ChatDB:
         cursor = db.cursor()
 
         room_id = self.get_room_id_from_rooms(room_name=room_name)
-        print(f"room id in previous : {room_id}")
 
         if join_timestamp:
             cursor.execute('''
@@ -93,27 +94,39 @@ class ChatDB:
             for text_message, sender_id, timestamp in old_messages:
                  old_msg_sender = self.get_sender_name_from_users(sender_id=sender_id, cursor=cursor)
                  msg = MessageInfo(type=MessageTypes.CHAT,text_message=text_message, sender_name=old_msg_sender, msg_timestamp=timestamp)
-                 print(f"msgInfo in chatdb {msg}")
                  yield msg.formatted_msg()  #if stop iteration then send the HISTORY
         else:
             return None
 
         db.close()
 
-    def store_user(self, *, sender_name: str):  #todo if exist do not increase the id
+    def store_user(self, *, sender_name: str):  # todo if exist do not increase the id
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
-        cursor.execute('INSERT OR IGNORE INTO users (username) VALUES (?)', (sender_name,))
-        db.commit()
+        cursor.execute('SELECT username from users WHERE username = ?', (sender_name,))
+        username = cursor.fetchone()
+
+        if not username:
+            cursor.execute('INSERT INTO users (username) VALUES (?)', (sender_name,))
+            db.commit()
+
         db.close()
 
-    def create_room(self, *, room_name: str): #todo if exist do not increase the id
+    def create_room(self, *, room_name: str):
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
-        cursor.execute('INSERT OR IGNORE INTO rooms (room_name) VALUES (?)', (room_name,))
-        db.commit()
+        cursor.execute('SELECT room_name from rooms WHERE room_name = ?', (room_name,))
+        record = cursor.fetchone()
+
+        if not record:
+            try:
+                cursor.execute('INSERT INTO rooms (room_name) VALUES (?)', (room_name,))
+                db.commit()
+            except sqlite3.IntegrityError:
+                logger.exception(f"Room '{room_name}' already exists")
+
         db.close()
 
     def store_message(self, *, text_message: str, sender_name: str, room_name: str, timestamp: str):
@@ -211,8 +224,12 @@ class ChatDB:
 
         cursor.execute('SELECT id FROM rooms WHERE room_name = ?', (room_name,))
         record = cursor.fetchone()
+        try:
+            if record:
+                return record[0]
+            return None
 
-        if record:
-            return record[0]
+        finally:
+            db.close()
 
-        return None
+#todo contxt manager for opening and closing db??

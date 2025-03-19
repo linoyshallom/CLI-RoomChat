@@ -9,10 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
 from config.config import ClientConfig, MessageServerConfig, FileServerConfig
-from definitions.types import RoomTypes
-from server.db.chat_db import END_HISTORY_RETRIEVAL #change
-from utils.utils import chunkify
 from definitions.errors import DownloadFileError, FileIdNotFoundError
+from definitions.structs import MessageInfo
+from definitions.types import RoomTypes, MessageTypes
+from utils.utils import chunkify
 
 logger = getLogger(__name__)
 
@@ -34,35 +34,36 @@ class MessageClient:
             logger.exception("Failed to connect message server ... ")
             raise Exception(f"Unable to connect to messages server - {host}, with port {port}") from e
 
-    def enter_room(self, *, room_name: str) -> None : #send json and parse in server to pydentic class
+    def enter_room(self, *, room_name: str) -> None :
+        setup_room_data = {}
         while True:
             try:
                 room_type = RoomTypes[room_name.upper()]
-
             except KeyError:
                 logger.error(f"\n Got unexpected room type {room_name}, try again")
 
             else:
-                self.message_socket.send(room_name.encode('utf-8'))
+                if room_type == RoomTypes.GLOBAL:
+                    setup_room_data = {
+                        "room_type": room_name
+                    }
 
-                if room_type == RoomTypes.PRIVATE:
+                elif room_type == RoomTypes.PRIVATE:
                     group_name = input("Enter private group name you want to chat: ").strip()
-                    self.message_socket.send(group_name.encode('utf-8'))
+                    setup_room_data = {
+                        "room_type": room_name,
+                        "group_name": group_name
+                    }
 
+                self.message_socket.send(json.dumps(setup_room_data).encode('utf-8'))
                 self.received_history_messages.clear()
-                self.received_messages.clear()   #prevant infinite blocking if flag have set
+                self.received_messages.clear()              #prevant infinite blocking if flag have set
                 break
 
-    # stop_event is activated by the caller upon switching room or closing the chat.
     def receive_messages(self) -> typing.Generator[str, None, None]:
         while True:
             try:
                 msg = self.message_socket.recv(2048).decode('utf-8')
-                if msg == END_HISTORY_RETRIEVAL:
-                    self.received_history_messages.set() #so clients won't get messages in the middel of fetching messages, but check it's really necessary
-                    self.received_messages.set()   #so clients can send after received history
-                    continue
-
                 self.received_messages.set()
                 yield msg
 
@@ -84,7 +85,6 @@ class FileClient:
             raise Exception(f"Unable to connect to file server - {host}, {port}") from e
 
     def upload_file(self, file_path: str) -> None :
-        print(os.path.isfile(file_path))
         if os.path.isfile(file_path):
 
             self.file_socket.send("UPLOAD".encode('utf-8'))
@@ -97,8 +97,16 @@ class FileClient:
 
             time.sleep(0.01)  # Separate the file name msg from the chunk msg
             with open(file_path, 'rb') as file:
-                for chunk in chunkify(reader_file=file, chunk_size=1024):
-                    self.file_socket.send(chunk)
+                while True:
+                    try:
+                        # for chunk in chunkify(reader_file=file, chunk_size=1024):
+                        chunk = next(chunkify(reader_file=file, chunk_size=1024))
+                        self.file_socket.send(chunk)
+                    except StopIteration:
+                        print("sending empty") #not sent to server
+                        self.file_socket.send(b"")
+                        break
+
         else:
             raise InvalidInput(f"{file_path} isn't a proper file, try again ")
 
@@ -116,7 +124,7 @@ class FileClient:
         final_response_from_server = self.file_socket.recv(1024).decode()
         return final_response_from_server
 
-    def get_file_id(self) -> str:  # should be one thread that listen to file server?
+    def get_file_id(self) -> str:
         while True:
             file_id = self.file_socket.recv(1024).decode()
             return file_id
@@ -139,23 +147,28 @@ class ClientUI:
         with self.ui_lock:
             self.messages.clear()
 
-    def clear_screen(self):
+    def clear_screen(self):  # Unfortunately working only on regular CLI
         with self.ui_lock:
             os.system('cls' if os.name == 'nt' else 'clear')
 
-    def start_receiving(self, message_client: MessageClient): #keep order of messages with lock don't helping
+    def start_receiving(self, message_client: MessageClient): #keep order of messages with lock don't helping in regular CLI
         print(f"get into receiving function:")
         for msg in message_client.receive_messages():
             self.add_message(msg)
             with self.receive_lock:
-                print(f"\n {msg}")
+                print(f"\n {msg}", flush=True)
+
+    def render(self, *, msg_type, text):
+        msg = MessageInfo(type=msg_type, text_message=text)
+        with self.ui_lock:
+            print(msg.formatted_msg())
 
 def main():
     ui = ClientUI(max_history_size=100)
     message_client = MessageClient(host=ClientConfig.host_ip, port=MessageServerConfig.listening_port)
     file_client = FileClient(host=ClientConfig.host_ip, port=FileServerConfig.listening_port)
-
-    username = input("Enter your username:")  #use name and client successful connection written at the same time
+    time.sleep(0.01)                          #logger info messages should be before this section
+    username = input("Enter your username:")
     message_client.message_socket.send(username.encode('utf-8'))
 
     with ThreadPoolExecutor(max_workers=5) as background_threads:
@@ -169,7 +182,7 @@ def main():
 
             ui.clear_history()
             background_threads.submit(ui.start_receiving,message_client)  # Start a "receiver" thread that receives messages and adds them to ClientUI
-            time.sleep(1)    #waits for all messages to come and then writing a message
+            time.sleep(1)    #waits for all messages to arrive and then writing a message
             message_client.received_messages.wait()
 
             while True:
@@ -177,7 +190,7 @@ def main():
                 msg = input(f"Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
 
                 if not msg:
-                    print("An empy message could not be sent ...")
+                    ui.render(msg_type=MessageTypes.SYSTEM, text="An empy message could not be sent ...")
 
                 if msg.lower() == "/switch":
                     message_client.message_socket.send(msg.encode('utf-8'))
@@ -186,10 +199,10 @@ def main():
                     break
 
                 elif msg.startswith("/file"):
-                    print(f"\n Uploading file ...")
+                    ui.render(msg_type=MessageTypes.SYSTEM, text=f"\n Uploading file ...")
 
                     if len(msg.split(' ', 1)) != 2:
-                        print(" No file path provided. Usage: /file <path>")
+                        ui.render(msg_type=MessageTypes.SYSTEM, text=" No file path provided. Usage: /file <path>")
                         continue
 
                     file_path_from_msg = msg.split(' ', 1)[1]
@@ -198,13 +211,12 @@ def main():
                         upload_thread.result()
 
                         if file_id := file_client.get_file_id():
-                            logger.info(f" file is uploaded successfully!")
+                            ui.render(msg_type=MessageTypes.SYSTEM, text=f"file is uploaded successfully!")
 
                         message_client.message_socket.send(file_id.encode('utf-8'))
                         ui.add_message(message=file_id)
 
                     except InvalidInput as e:
-                        print("got here")
                         logger.exception(f"{repr(e)}")
                         continue
 
@@ -213,27 +225,30 @@ def main():
                         raise Exception(f"Error in uploading the file") from e
 
                 elif msg.startswith("/download"):
-                    logger.info(f"\n Downloading file ...")
+                    ui.render(msg_type=MessageTypes.SYSTEM, text=f"\n Downloading file ...")
 
                     if len(msg.split()) != 3:
-                        logger.error(" You should provide link file and destination path , Usage: /download <link_file> <dst_path>")
+                        ui.render(
+                            msg_type=MessageTypes.SYSTEM,
+                            text=" You should provide link file and destination path , Usage: /download <link_file> <dst_path>"
+                        )
                         continue
 
                     download_thread = background_threads.submit(file_client.download_file, msg)
                     try:
                         download_thread.result()
-                        ui.add_message("File is downloaded successfully!")
+                        ui.render(msg_type=MessageTypes.SYSTEM, text="File is downloaded successfully!")
 
                     except DownloadFileError as e:
-                         logger.exception(f"Failed to download this file, {repr(e)} ")
+                         ui.render(msg_type=MessageTypes.SYSTEM, text=f"Failed to download this file, {repr(e)} ")
                          continue
 
                     except FileIdNotFoundError:
-                        logger.error("File id was NOT found, check your id or try send this file again")
+                        ui.render(msg_type=MessageTypes.SYSTEM, text="File id was NOT found, check your id or try send this file again")
                         continue
 
                 elif msg.startswith("/quit"):
-                    logger.info("Exiting chat...")
+                    ui.render(msg_type=MessageTypes.SYSTEM, text="Exiting chat...")
                     message_client.message_socket.close()
                     return
 
@@ -250,6 +265,7 @@ if __name__ == '__main__':
     )
     main()
 
-#todo send json instead of many send or receive and parse into pydentic- files handlers and room setup
+
+#todo error file handleing dont working
 #todo check necessary of many things (history)
 #todo join message cannot be previous to the history messages, why generator dot keep the order and lock don't work here -> history event

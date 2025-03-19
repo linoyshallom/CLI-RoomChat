@@ -30,9 +30,9 @@ class MessageInfo:
         else:
             return f"[{self.msg_timestamp}] [{self.sender_name}]: {self.text_message}"
 
-# class SetupData(BaseModel):
-#     room_type: str
-#     group_name: str
+class SetupRoomData(BaseModel):
+    room_type: str
+    group_name: typing.Optional[str] = None
 
 class UploadFileData(BaseModel):
     filename: str
