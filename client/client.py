@@ -266,6 +266,4 @@ if __name__ == '__main__':
     main()
 
 
-#todo error file handleing dont working
-#todo check necessary of many things (history)
-#todo join message cannot be previous to the history messages, why generator dot keep the order and lock don't work here -> history event
+#todo error file handling don't working

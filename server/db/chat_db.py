@@ -11,7 +11,7 @@ logger = getLogger(__name__)
 class ChatDBConfig:
     db_path: str = os.path.join(os.getcwd(),'db', 'chat.db')
 
-class ChatDB:
+class ChatDB:     #todo contxt manager for opening and closing db??
     def __init__(self):
         self.db_path = ChatDBConfig.db_path
         # self.db = sqlite3.connect(self.db_path)
@@ -100,7 +100,7 @@ class ChatDB:
 
         db.close()
 
-    def store_user(self, *, sender_name: str):  # todo if exist do not increase the id
+    def store_user(self, *, sender_name: str):
         db = sqlite3.connect(self.db_path)
         cursor = db.cursor()
 
@@ -232,4 +232,3 @@ class ChatDB:
         finally:
             db.close()
 
-#todo contxt manager for opening and closing db??

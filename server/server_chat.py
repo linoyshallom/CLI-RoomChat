@@ -38,7 +38,6 @@ class ChatServer:
 
         client_info = ClientInfo(client_conn=conn, username=sender_name)
 
-
         room_setup_thread = threading.Thread(target=self._setup_room, args=(conn, client_info))
         room_setup_thread.start()
 

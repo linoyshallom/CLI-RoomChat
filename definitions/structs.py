@@ -41,7 +41,3 @@ class UploadFileData(BaseModel):
 class DownloadFileData(BaseModel):
     file_id: str
     dst_path: str
-
-
-
-#todo consider others class with basemodel
