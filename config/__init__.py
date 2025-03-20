@@ -1,1 +1,1 @@
-from config.config import ClientConfig, MessageServerConfig, FileServerConfig
+from config.config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR

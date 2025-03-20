@@ -8,11 +8,11 @@ import typing
 from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
-from config.config import ClientConfig, MessageServerConfig, FileServerConfig
+from config.config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR
 from definitions.errors import DownloadFileError, FileIdNotFoundError
 from definitions.structs import MessageInfo
 from definitions.types import RoomTypes, MessageTypes
-from utils.utils import chunkify
+from utils.utils import chunkify, split_messages_in_buffer
 
 logger = getLogger(__name__)
 
@@ -23,8 +23,8 @@ class MessageClient:
     def __init__(self, host: str, port: int):
         self.message_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-        self.received_history_messages = threading.Event()  #indicate when all history batch messages retrieve to client
-        self.received_messages = threading.Event()   #while receiving first display the received messages and then ask for enter messages (check if relevant)
+        # self.received_history_messages = threading.Event()  #indicate when all history batch messages retrieve to client
+        # self.received_messages = threading.Event()   #while receiving first display the received messages and then ask for enter messages (check if relevant)
 
         try:
             self.message_socket.connect((host, port))
@@ -56,16 +56,29 @@ class MessageClient:
                     }
 
                 self.message_socket.send(json.dumps(setup_room_data).encode('utf-8'))
-                self.received_history_messages.clear()
-                self.received_messages.clear()              #prevant infinite blocking if flag have set
+                # self.received_history_messages.clear()
+                # self.received_messages.clear()              #prevant infinite blocking if flag have set
                 break
 
-    def receive_messages(self) -> typing.Generator[str, None, None]:
+    def receive_messages(self) -> typing.Generator[str, None, None]: #todo check messages that bigger then 1024
+        fragmented_msg = ""
         while True:
             try:
-                msg = self.message_socket.recv(2048).decode('utf-8')
-                self.received_messages.set()
-                yield msg
+                buffer_msg = self.message_socket.recv(1024).decode('utf-8')  # I consumed buffer of 1024 bytes which can contains more than one message
+                print(f"msg received from server : {buffer_msg}")
+
+                aggrigated_buffers = fragmented_msg + buffer_msg
+                print(f"joined buffered {aggrigated_buffers}")
+                yield from split_messages_in_buffer(aggrigated_buffers)
+
+                if END_OF_MSG_INDICATOR not in buffer_msg:   # If no END_OF_MSG_INDICATOR at all, store the entire buffer as a fragment - msg can be bigger then 1024
+                    fragmented_msg += buffer_msg
+
+                elif buffer_msg[-1] != END_OF_MSG_INDICATOR:   # If the last char isn't END_OF_MSG_INDICATOR, extract the remaining fragment
+                    fragmented_msg = buffer_msg.rsplit(END_OF_MSG_INDICATOR, 1)[1]
+
+                else:
+                    fragmented_msg = ""
 
             except Exception as e:
                 self.message_socket.close()
@@ -183,18 +196,18 @@ def main():
             ui.clear_history()
             background_threads.submit(ui.start_receiving,message_client)  # Start a "receiver" thread that receives messages and adds them to ClientUI
             time.sleep(1)    #waits for all messages to arrive and then writing a message
-            message_client.received_messages.wait()
+            # message_client.received_messages.wait()  #first the history and then joining msg
 
             while True:
                 time.sleep(0.01)
-                msg = input(f"Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
+                msg = input(f"\n Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
 
                 if not msg:
                     ui.render(msg_type=MessageTypes.SYSTEM, text="An empy message could not be sent ...")
 
                 if msg.lower() == "/switch":
                     message_client.message_socket.send(msg.encode('utf-8'))
-                    message_client.received_history_messages.clear()
+                    # message_client.received_history_messages.clear()
                     ui.clear_screen()
                     break
 

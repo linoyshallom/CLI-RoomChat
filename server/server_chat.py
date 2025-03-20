@@ -2,11 +2,12 @@ import datetime
 import json
 import socket
 import threading
+import time
 import typing
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from config.config import MessageServerConfig
+from config.config import MessageServerConfig, END_OF_MSG_INDICATOR
 from definitions.structs import ClientInfo, MessageInfo, SetupRoomData
 from definitions.types import RoomTypes, MessageTypes
 from server.db.chat_db import ChatDB
@@ -65,10 +66,12 @@ class ChatServer:
         client_info.current_room = group_name
         self.room_name_to_active_clients[group_name].append(client_info)
 
+        client_info.room_setup_done_flag.set()
+
+        time.sleep(0.1)  # So joining msg will be after fetching messages db
         msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} joined {group_name}")
         self._broadcast_to_all_active_clients_in_room(msg=msg_obj, current_room=client_info.current_room)
 
-        client_info.room_setup_done_flag.set()
         print(f"finish room setup")
 
     def _private_room_setup_handler(self, *, conn, username, join_timestamp, group_name):
@@ -96,7 +99,7 @@ class ChatServer:
         self.chat_db.create_room(room_name=group_name)
         self._fetch_history_messages(conn=conn, group_name=group_name)
 
-    def _fetch_history_messages(self, *, conn: socket.socket, group_name: str, join_timestamp: typing.Optional[str] = None):
+    def _fetch_history_messages(self, *, conn: socket.socket, group_name: str, join_timestamp: typing.Optional[str] = None): #todo convert to messageinfo and dlient wont touch
         if join_timestamp:
             messages_from_db = self.chat_db.send_previous_messages_in_room(room_name=group_name, join_timestamp=join_timestamp)
         else:
@@ -105,14 +108,17 @@ class ChatServer:
         try:
             msg = next(messages_from_db)
             print(f"{msg} from db")
-            conn.send(msg.encode('utf-8'))
+            msg_with_indicator = msg+END_OF_MSG_INDICATOR
+            conn.send(msg_with_indicator.encode('utf-8'))
 
             for msg in iter(messages_from_db):
-                conn.send(msg.encode('utf-8'))
+                print(f"{msg} from db")
+                msg_with_indicator = msg + END_OF_MSG_INDICATOR
+                conn.send(msg_with_indicator.encode('utf-8'))
 
         except StopIteration:
-            print("no messages in this room")
-            conn.send("No messages in this chat yet ...".encode('utf-8'))
+            print("No messages in this chat yet ..." + END_OF_MSG_INDICATOR)
+            conn.send(("No messages in this chat yet ..." + END_OF_MSG_INDICATOR).encode('utf-8'))
 
     def _receive_messages(self, conn, client_info: ClientInfo):
         client_info.room_setup_done_flag.wait()
@@ -153,7 +159,8 @@ class ChatServer:
             for client in clients_in_room:
 
                 if client.current_room == current_room:
-                    final_msg = msg.formatted_msg()
+                    final_msg = msg.formatted_msg() + END_OF_MSG_INDICATOR
+                    print(f"final msg in server : {final_msg}")
                     client.client_conn.send(final_msg.encode('utf-8'))
 
                 print(f"send msg to {client.username}")

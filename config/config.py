@@ -35,4 +35,5 @@ class MessageServerConfig:
     listener_limit_number: int = 5
     max_threads_number: int = 7
 
+END_OF_MSG_INDICATOR = '@'
 

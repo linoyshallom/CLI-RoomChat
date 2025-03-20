@@ -98,8 +98,7 @@ class FileTransferServer:
                     with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path,file_name), 'wb') as dst_file:
                         for chunk in chunkify(reader_file=src_file):
                             dst_file.write(chunk)
-                    conn.send("done downloading".encode('utf-8'))
-
+                    conn.send("done downloading".encode('utf-8')) # i dont want client to get messages from here
 
                 except Exception as e:
                     raise DownloadFileError(f"Failed to download {file_id}") from e
