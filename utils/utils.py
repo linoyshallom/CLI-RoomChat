@@ -1,6 +1,6 @@
-import os
 import typing
 from typing import IO
+
 from config import END_OF_MSG_INDICATOR
 
 
@@ -18,7 +18,4 @@ def split_messages_in_buffer(buffer_msg: str) -> typing.Generator[str, None, Non
         completed_messages = buffer_msg.rsplit(END_OF_MSG_INDICATOR,1)[0]
         yield from completed_messages.split(END_OF_MSG_INDICATOR)
 
-if __name__ == "__main__":
-    a = "lin@hi@sup@adfawetrwt5e6etd"
-    # for item in split_messages_in_buffer("dfsdkfbmsdmfsdnf"):
-    #     print(item)
+

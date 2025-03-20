@@ -1,3 +1,10 @@
+
+class InvalidInput(Exception):
+    pass
+
+class UploadFileError(Exception):
+    pass
+
 class DownloadFileError(Exception):
     pass
 

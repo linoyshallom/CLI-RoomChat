@@ -1,25 +1,15 @@
 import json
 import os
 import socket
-import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from config.config import FileServerConfig
+from config import FileServerConfig, END_OF_FILE_INDICATOR
+from db import ChatDB
+from definitions import DownloadFileError, UploadFileError, FileIdNotFoundError
 from definitions.structs import UploadFileData, DownloadFileData
 from definitions.types import FileHandlerTypes
-from server.db.chat_db import ChatDB
 from utils import chunkify
-
-
-class UploadFileError(Exception):
-    pass
-
-class DownloadFileError(Exception):
-    pass
-
-class FileIdNotFoundError(Exception):
-    pass
 
 
 class FileTransferServer:
@@ -36,39 +26,38 @@ class FileTransferServer:
         self.chat_db = ChatDB()
 
     def file_handler(self, conn):
-        handler = conn.recv(1024).decode()
-        try:
-            handler_type = FileHandlerTypes[handler]
-        except KeyError:
-            raise Exception(f"Got unexpected handler type {handler}")   #todo don't catch error for some reason
+        while True:
+            handler = conn.recv(1024).decode()
+            print(handler)
+            try:
+                handler_type = FileHandlerTypes[handler]
+            except KeyError:
+                raise Exception(f"Got unexpected handler type {handler}")   #todo don't catch error for some reason
 
-        json_data = conn.recv(1024).decode()
+            except Exception as e:
+                raise Exception(f"Unexpected exception") from e
 
-        if handler_type == FileHandlerTypes.UPLOAD:
-            print("into upload")
-            upload_data = UploadFileData(**json.loads(json_data))
+            json_data = conn.recv(1024).decode()
 
-            upload_thread = threading.Thread(target=self._upload_file, kwargs={"conn": conn, "data": upload_data})
-            upload_thread.start()
+            if handler_type == FileHandlerTypes.UPLOAD:
+                upload_data = UploadFileData(**json.loads(json_data))
+                self._upload_file(conn=conn, data=upload_data)
 
-        elif handler_type == FileHandlerTypes.DOWNLOAD:
-            download_data = DownloadFileData(**json.loads(json_data))
+            elif handler_type == FileHandlerTypes.DOWNLOAD:
+                download_data = DownloadFileData(**json.loads(json_data))
+                self._download_file(conn=conn, data=download_data)
 
-            download_thread = threading.Thread(target=self._download_file, kwargs={"conn": conn, "data": download_data })
-            download_thread.start()
-
-    def _upload_file(self, *, conn: socket.socket, data: UploadFileData):
+    def _upload_file(self, *, conn: socket.socket, data: UploadFileData): #not ready to be checked, still on it
         file_size = 0
         file_id = self._generate_file_id(file_name=data.filename)
         uploaded_file_path = os.path.join(FileServerConfig.upload_dir_dst_path(), file_id)
-
         try:
             with open(uploaded_file_path, 'ab') as file:
                 while True:
                     chunk = conn.recv(1024)
                     print(f"chunk - {chunk}")
 
-                    if not chunk:
+                    if chunk == END_OF_FILE_INDICATOR:
                         break
 
                     file_size += len(chunk)
@@ -78,10 +67,10 @@ class FileTransferServer:
                     file.write(chunk)
                     print(f"writing {chunk} to file  ")
 
+
         except Exception as e:
             raise UploadFileError(f"Failed write to {uploaded_file_path}") from e
 
-        print("store file in files")
         self.chat_db.store_file_in_files(file_path=uploaded_file_path, file_id=file_id)
         conn.send(file_id.encode('utf-8'))
 
@@ -98,7 +87,8 @@ class FileTransferServer:
                     with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path,file_name), 'wb') as dst_file:
                         for chunk in chunkify(reader_file=src_file):
                             dst_file.write(chunk)
-                    conn.send("done downloading".encode('utf-8')) # i dont want client to get messages from here
+                    conn.send("done downloading".encode('utf-8')) # I don't want client to get messages from here.
+                    break
 
                 except Exception as e:
                     raise DownloadFileError(f"Failed to download {file_id}") from e
@@ -127,14 +117,7 @@ if __name__ == "__main__":
     main()
 
 
-#ignore
 #todo servers execution should be in one place ?
-# binary files like images, pdf uploaded and downloaded wired  ..
-# is logic supports 2 parallel
-# if user want to upload file that exist in uploads i won't Writing it again !
-# set max files to store, if gets to max then i delete the oldest file
-# check maximum file size if raise exception
-# solve uploading and downloading in the same socket
+# exceptions handling
+# check maximum file size if raise exception - dont raising exception
 # if something failed in the server i want to allow chat anyway
-# if downloads exist maby try with (1)
-# uploading and then downloading

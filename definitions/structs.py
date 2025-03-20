@@ -37,7 +37,6 @@ class SetupRoomData(BaseModel):
 class UploadFileData(BaseModel):
     filename: str
 
-
 class DownloadFileData(BaseModel):
     file_id: str
     dst_path: str

@@ -1,6 +1,5 @@
 import enum
 
-
 class RoomTypes(enum.Enum):
     GLOBAL = "GLOBAL"
     PRIVATE = "PRIVATE"
@@ -16,3 +15,10 @@ class FileHandlerTypes(enum.Enum):
     DOWNLOAD = "DOWNLOAD"
 
 #class FileTransferStatus: succeed, failed, notfound
+
+if __name__ == "__main__":
+    try:
+       print(FileHandlerTypes.UPLOAD)
+       # FileHandlerTypes["UPLOAD"]
+    except Exception as e:
+        raise e

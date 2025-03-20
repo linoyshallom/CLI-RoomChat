@@ -1,1 +1,1 @@
-from client.client import MessageClient
+from .client import MessageClient

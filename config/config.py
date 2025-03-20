@@ -10,7 +10,8 @@ class ClientConfig:
 class FileServerConfig:
     listening_port: int = 78
     listener_limit_number: int = 5
-    max_file_size: int = 16_000_000
+    max_file_size: int = 16_000 #16_000_000
+    max_files_stored_in_uploads: int = 20
     max_threads_number: int = 7
 
     @classmethod
@@ -36,4 +37,5 @@ class MessageServerConfig:
     max_threads_number: int = 7
 
 END_OF_MSG_INDICATOR = '@'
+END_OF_FILE_INDICATOR = b'END_OF_FILE'
 

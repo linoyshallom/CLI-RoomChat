@@ -99,7 +99,7 @@ class ChatServer:
         self.chat_db.create_room(room_name=group_name)
         self._fetch_history_messages(conn=conn, group_name=group_name)
 
-    def _fetch_history_messages(self, *, conn: socket.socket, group_name: str, join_timestamp: typing.Optional[str] = None): #todo convert to messageinfo and dlient wont touch
+    def _fetch_history_messages(self, *, conn: socket.socket, group_name: str, join_timestamp: typing.Optional[str] = None):
         if join_timestamp:
             messages_from_db = self.chat_db.send_previous_messages_in_room(room_name=group_name, join_timestamp=join_timestamp)
         else:
