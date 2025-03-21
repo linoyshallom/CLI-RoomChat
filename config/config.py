@@ -10,7 +10,7 @@ class ClientConfig:
 class FileServerConfig:
     listening_port: int = 78
     listener_limit_number: int = 5
-    max_file_size: int = 16_000 #16_000_000
+    max_file_size: int = 16_000   #16mb
     max_files_stored_in_uploads: int = 20
     max_threads_number: int = 7
 
@@ -28,7 +28,6 @@ class FileServerConfig:
             raise Exception(f"Failed to create uploads dir") from e
 
         return upload_dir
-
 
 @dataclasses.dataclass(frozen=True)
 class MessageServerConfig:

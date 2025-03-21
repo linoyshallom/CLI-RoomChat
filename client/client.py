@@ -25,35 +25,36 @@ class MessageClient:
             logger.exception("Failed to connect message server ... ")
             raise Exception(f"Unable to connect to messages server - {host}, with port {port}") from e
 
+    @property
+    def message_socket(self) -> socket.socket:
+        return self._message_socket
+
     def enter_room(self, *, room_name: str) -> None :
         setup_room_data = {}
         while True:
-            try:
-                room_type = RoomTypes[room_name.upper()]
-            except KeyError:
-                logger.error(f"\n Got unexpected room type {room_name}, try again")
+            room_type = RoomTypes[room_name.upper()]
 
-            else:
-                if room_type == RoomTypes.GLOBAL:
-                    setup_room_data = {
-                        "room_type": room_name
-                    }
+            if room_type == RoomTypes.GLOBAL:
+                setup_room_data = {
+                    "room_type": room_name
+                }
 
-                elif room_type == RoomTypes.PRIVATE:
-                    group_name = input("Enter private group name you want to chat: ").strip()
-                    setup_room_data = {
-                        "room_type": room_name,
-                        "group_name": group_name
-                    }
+            elif room_type == RoomTypes.PRIVATE:
+                group_name = input("Enter private group name you want to chat: ").strip()
+                setup_room_data = {
+                    "room_type": room_name,
+                    "group_name": group_name
+                }
 
-                self._message_socket.send(json.dumps(setup_room_data).encode('utf-8'))
-                break
+            self._message_socket.send(json.dumps(setup_room_data).encode('utf-8'))
+            break
 
     def receive_messages(self) -> typing.Generator[str, None, None]:
         fragmented_msg = ""
         while True:
             try:
-                buffer_msg = self._message_socket.recv(50).decode('utf-8')  # I consumed buffer of 1024 bytes which can contains more than one message
+                # I consumed buffer of 1024 bytes which can contains more than one message
+                buffer_msg = self._message_socket.recv(1024).decode('utf-8')
                 aggrigated_buffer = fragmented_msg + buffer_msg
 
                 messages_in_buffer = aggrigated_buffer.split(END_OF_MSG_INDICATOR)
@@ -69,10 +70,6 @@ class MessageClient:
                 self._message_socket.close()
                 logger.exception("Failed to receive messages")
                 raise Exception("Cannot receiving messages...") from e
-
-    @property
-    def message_socket(self):
-        return self._message_socket
 
 class FileClient:
     def __init__(self, host: str, port: int):
@@ -111,7 +108,7 @@ class FileClient:
             raise InvalidInput(f"Client entered inappropriate file")
 
     # Triggers download_file methode in FileServerTransfer
-    def download_file(self, message: str) -> str:
+    def download_file(self, message: str) -> None:
         self.file_socket.send("DOWNLOAD".encode('utf-8'))
         file_id = message.split()[1]
         user_dir_dst_path = message.split()[2]
@@ -122,14 +119,10 @@ class FileClient:
         }
         self.file_socket.sendall(json.dumps(download_data).encode('utf-8'))
 
-        final_response_from_server = self.file_socket.recv(1024).decode()
-        return final_response_from_server
-
 class ClientUI:
 
     @classmethod
     def start_receiving(cls, message_client: MessageClient):  # Fetch messages from db
-        print(f"get into receiving function:")
         for msg in message_client.receive_messages():
             print(f"\n {msg}")
 
@@ -144,97 +137,97 @@ class ClientUI:
 
 
 def main():
-    # ui = ClientUI()
     message_client = MessageClient(host=ClientConfig.host_ip, port=MessageServerConfig.listening_port)
     file_client = FileClient(host=ClientConfig.host_ip, port=FileServerConfig.listening_port)
 
-    time.sleep(0.01)                          #logger info messages should be before this section
+    time.sleep(0.01)                # Ensure displaying logger info messages before this section (I know that's weird)
     username = input("Enter your username:")
     message_client.message_socket.send(username.encode('utf-8'))
 
     with ThreadPoolExecutor(max_workers=5) as background_threads:
         while True:
-            print(f"\n Available rooms to chat:")
-            for room in RoomTypes:
-                print(f"- {room.value}")
+            try:
+                print(f"\n Available rooms to chat:")
+                for room in RoomTypes:
+                    print(f"- {room.value}")
 
-            chosen_room = input("Enter room type: ").strip().upper()
-            message_client.enter_room(room_name=chosen_room)
+                chosen_room = input("Enter room type: ").strip().upper()
+                message_client.enter_room(room_name=chosen_room)
 
-            background_threads.submit(ClientUI.start_receiving,message_client)
-            time.sleep(1)    #waits for all messages to arrive and then writing a message
+            except KeyError:
+                ClientUI.clear_screen()
+                ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Got unexpected room type {chosen_room}, try again")
 
-            while True:
-                time.sleep(0.01)  # Prevent from chat messages written after this enter msg
-                msg = input(f"\n Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
+            else:
+                background_threads.submit(ClientUI.start_receiving,message_client)
+                while True:
+                    time.sleep(1)     # Waits for all messages to arrive and then writing a message
+                    msg = input(f"\n Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
 
-                if not msg:
-                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text="An empy message could not be sent ...")
+                    if not msg:
+                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text="An empy message could not be sent ...")
 
-                if msg.lower() == "/switch":
-                    message_client.message_socket.send(msg.encode('utf-8'))
-                    ClientUI.clear_screen()
-                    break
+                    if msg.lower() == "/switch":
+                        message_client.message_socket.send(msg.encode('utf-8'))
+                        ClientUI.clear_screen()
+                        break
 
-                elif msg.startswith("/file"):
-                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f" Uploading file ...")
+                    elif msg.startswith("/file"):
+                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Uploading file ...")
 
-                    if len(msg.split(' ', 1)) != 2:
-                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=" No file path provided. Usage: /file <path>")
-                        continue
+                        if len(msg.split(' ', 1)) != 2:
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text=" No file path provided. Usage: /file <path>")
+                            continue
 
-                    file_path_from_msg = msg.split(' ', 1)[1]
-                    try:
-                        upload_thread = background_threads.submit(file_client.upload_file, file_path_from_msg)
-                        upload_thread.result()
+                        file_path_from_msg = msg.split(' ', 1)[1]
+                        try:
+                            upload_thread = background_threads.submit(file_client.upload_file, file_path_from_msg)
+                            upload_thread.result()
+
+                            if result_from_server := file_client.file_socket.recv(1024).decode():
+
+                                if result_from_server == FileTransferStatus.EXCEEDED.value:
+                                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Upload failed, file size exceeded")
+
+                                else:
+                                    file_id = result_from_server
+                                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"File is uploaded successfully!")
+                                    message_client.message_socket.send(file_id.encode('utf-8'))
+
+                        except InvalidInput:
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"{file_path_from_msg} isn't a proper file, try again")
+
+                        except Exception as e:
+                            file_client.file_socket.close()
+                            raise Exception(f"Error in uploading the file") from e
+
+                    elif msg.startswith("/download"):
+                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Downloading file ...")
+
+                        if len(msg.split()) != 3:
+                            ClientUI.render(
+                                msg_type=MessageTypes.SYSTEM,
+                                text=" You should provide link file and destination path , Usage: /download <link_file> <dst_path>"
+                            )
+                            continue
+
+                        background_threads.submit(file_client.download_file, msg)
 
                         if result_from_server := file_client.file_socket.recv(1024).decode():
 
-                            if result_from_server == FileTransferStatus.EXCEEDED.value:
-                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Upload failed, file size exceeded")
+                            if result_from_server == FileTransferStatus.SUCCEED.value:
+                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text="File is downloaded successfully!")
 
-                            else:
-                                file_id = result_from_server
-                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"file is uploaded successfully!")
-                                message_client.message_socket.send(file_id.encode('utf-8'))
+                            if result_from_server == FileTransferStatus.NOT_FOUND.value:
+                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Download failed, file id was not found")
 
-                    except InvalidInput:
-                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"{file_path_from_msg} isn't a proper file, try again")
-                        continue
+                    elif msg.startswith("/quit"):
+                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Exiting chat...")
+                        message_client.message_socket.close()
+                        return
 
-                    except Exception as e:
-                        file_client.file_socket.close()
-                        raise Exception(f"Error in uploading the file") from e
-
-                elif msg.startswith("/download"):
-                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Downloading file ...")
-
-                    if len(msg.split()) != 3:
-                        ClientUI.render(
-                            msg_type=MessageTypes.SYSTEM,
-                            text=" You should provide link file and destination path , Usage: /download <link_file> <dst_path>"
-                        )
-                        continue
-
-                    background_threads.submit(file_client.download_file, msg)
-
-                    if result_from_server := file_client.file_socket.recv(1024).decode():
-                        print(f"result from server : {result_from_server}")
-
-                        if result_from_server == FileTransferStatus.SUCCEED.value:
-                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="File is downloaded successfully!")
-
-                        if result_from_server == FileTransferStatus.NOT_FOUND.value:
-                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Failed downloading file id was not found")
-
-                elif msg.startswith("/quit"):
-                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Exiting chat...")
-                    message_client.message_socket.close()
-                    return
-
-                else:
-                    message_client.message_socket.send(msg.encode('utf-8'))
-
+                    else:
+                        message_client.message_socket.send(msg.encode('utf-8'))
 
 
 if __name__ == '__main__':

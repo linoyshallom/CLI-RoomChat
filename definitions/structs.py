@@ -5,7 +5,7 @@ import typing
 
 from pydantic import BaseModel
 
-from .types import RoomTypes, MessageTypes  # change this pattern for all imports if works
+from .types import RoomTypes, MessageTypes
 
 
 @dataclasses.dataclass
