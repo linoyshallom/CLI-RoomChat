@@ -37,5 +37,4 @@ class MessageServerConfig:
     max_threads_number: int = 7
 
 END_OF_MSG_INDICATOR = '@'
-END_OF_FILE_INDICATOR = b'END_OF_FILE'
 

@@ -11,10 +11,13 @@ logger = getLogger(__name__)
 class ChatDBConfig:
     db_path: str = os.path.join(os.getcwd(),'db', 'chat.db')
 
-class ChatDB:     #todo contxt manager for opening and closing db??
+class ChatDB:
     def __init__(self):
         self.db_path = ChatDBConfig.db_path
         # self.db = sqlite3.connect(self.db_path)
+
+
+    # def session(self):#todo should be context manager
 
     def setup_database(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)

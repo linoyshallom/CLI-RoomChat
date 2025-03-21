@@ -7,12 +7,9 @@ import typing
 from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
-from config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR, END_OF_FILE_INDICATOR
-from definitions import DownloadFileError, FileIdNotFoundError
-from definitions import InvalidInput
-from definitions import MessageInfo
-from definitions import RoomTypes, MessageTypes
-from utils import chunkify, split_messages_in_buffer
+from config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR
+from definitions import InvalidInput, MessageInfo, RoomTypes, MessageTypes, FileTransferStatus
+from utils import chunkify
 
 logger = getLogger(__name__)
 
@@ -52,23 +49,21 @@ class MessageClient:
                 self._message_socket.send(json.dumps(setup_room_data).encode('utf-8'))
                 break
 
-    def receive_messages(self) -> typing.Generator[str, None, None]: #not ready to be checked, still working on it
+    def receive_messages(self) -> typing.Generator[str, None, None]:
         fragmented_msg = ""
         while True:
             try:
                 buffer_msg = self._message_socket.recv(50).decode('utf-8')  # I consumed buffer of 1024 bytes which can contains more than one message
+                aggrigated_buffer = fragmented_msg + buffer_msg
 
-                aggrigated_buffers = fragmented_msg + buffer_msg
-                yield from split_messages_in_buffer(aggrigated_buffers)
+                messages_in_buffer = aggrigated_buffer.split(END_OF_MSG_INDICATOR)
 
-                if END_OF_MSG_INDICATOR not in buffer_msg:   # If no END_OF_MSG_INDICATOR at all, store the entire buffer as a fragment - msg can be bigger then 1024
-                    fragmented_msg += buffer_msg
-
-                elif buffer_msg[-1] != END_OF_MSG_INDICATOR:   # If the last char isn't END_OF_MSG_INDICATOR, extract the remaining fragment
-                    fragmented_msg = buffer_msg.rsplit(END_OF_MSG_INDICATOR, 1)[1]
-
+                if not aggrigated_buffer.endswith(END_OF_MSG_INDICATOR):
+                    fragmented_msg = messages_in_buffer[-1]
                 else:
                     fragmented_msg = ""
+
+                yield from messages_in_buffer[:-1]
 
             except Exception as e:
                 self._message_socket.close()
@@ -92,7 +87,7 @@ class FileClient:
             raise Exception(f"Unable to connect to file server - {host}, {port}") from e
 
     @property
-    def file_socket(self):
+    def file_socket(self) -> socket.socket:
         return self._file_socket
 
     # Triggers upload_file methode in FileServerTransfer
@@ -102,21 +97,16 @@ class FileClient:
             self._file_socket.send("UPLOAD".encode('utf-8'))
 
             filename = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
             upload_data = {
-                "filename": filename
+                "filename": filename,
+                "file_size": file_size
             }
             self._file_socket.sendall(json.dumps(upload_data).encode('utf-8'))
 
-            # time.sleep(0.01)  # Separate the file name msg from the chunk msg
             with open(file_path, 'rb') as file:
-                while True:
-                    try:
-                        chunk = next(chunkify(reader_file=file, chunk_size=1024))
-                        self._file_socket.sendall(chunk)
-                    except StopIteration:
-                        print("sending INDICATOR")
-                        self._file_socket.sendall(END_OF_FILE_INDICATOR)
-                        break
+                for chunk in chunkify(reader_file=file, chunk_size=1024):
+                    self._file_socket.sendall(chunk)
         else:
             raise InvalidInput(f"Client entered inappropriate file")
 
@@ -135,42 +125,26 @@ class FileClient:
         final_response_from_server = self.file_socket.recv(1024).decode()
         return final_response_from_server
 
-    def get_file_id(self) -> str:
-        file_id = self.file_socket.recv(1024).decode()
-        return file_id
-
 class ClientUI:
-    def __init__(self, *, max_history_size: int):
-        # Save here all the messages that should be displayed in the UI
-        self._messages: typing.List[str] = list()
-        self._max_history_size: int = max_history_size
 
-    def add_message(self, message: str):
-        if len(self._messages) >= self._max_history_size:
-            self._messages.pop(0)
-        self._messages.append(message)
-
-    def clear_history(self):
-        self._messages.clear()
-
-    @staticmethod
-    def clear_screen():
-        os.system('cls' if os.name == 'nt' else 'clear')
-
-    def start_receiving(self, message_client: MessageClient):
+    @classmethod
+    def start_receiving(cls, message_client: MessageClient):  # Fetch messages from db
         print(f"get into receiving function:")
         for msg in message_client.receive_messages():
-            self.add_message(msg)
-            print(f"\n {msg}", flush=True)
+            print(f"\n {msg}")
 
-    @staticmethod
-    def render(*, msg_type, text):  #should be thread that clean screen and print all messages list
+    @classmethod
+    def render(cls, *, msg_type, text):
         msg = MessageInfo(type=msg_type, text_message=text)
         print(msg.formatted_msg())
 
+    @classmethod
+    def clear_screen(cls):
+        os.system('cls' if os.name == 'nt' else 'clear')
+
 
 def main():
-    ui = ClientUI(max_history_size=100)
+    # ui = ClientUI()
     message_client = MessageClient(host=ClientConfig.host_ip, port=MessageServerConfig.listening_port)
     file_client = FileClient(host=ClientConfig.host_ip, port=FileServerConfig.listening_port)
 
@@ -187,26 +161,26 @@ def main():
             chosen_room = input("Enter room type: ").strip().upper()
             message_client.enter_room(room_name=chosen_room)
 
-            ui.clear_history()
-            background_threads.submit(ui.start_receiving,message_client)  # Start a "receiver" thread that receives messages and adds them to ClientUI
+            background_threads.submit(ClientUI.start_receiving,message_client)
             time.sleep(1)    #waits for all messages to arrive and then writing a message
 
             while True:
+                time.sleep(0.01)  # Prevent from chat messages written after this enter msg
                 msg = input(f"\n Enter a message (text, /switch, /file <path>, /download <id> <path> :  ")
 
                 if not msg:
-                    ui.render(msg_type=MessageTypes.SYSTEM, text="An empy message could not be sent ...")
+                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text="An empy message could not be sent ...")
 
                 if msg.lower() == "/switch":
                     message_client.message_socket.send(msg.encode('utf-8'))
-                    ui.clear_screen()
+                    ClientUI.clear_screen()
                     break
 
                 elif msg.startswith("/file"):
-                    ui.render(msg_type=MessageTypes.SYSTEM, text=f" Uploading file ...")
+                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f" Uploading file ...")
 
                     if len(msg.split(' ', 1)) != 2:
-                        ui.render(msg_type=MessageTypes.SYSTEM, text=" No file path provided. Usage: /file <path>")
+                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=" No file path provided. Usage: /file <path>")
                         continue
 
                     file_path_from_msg = msg.split(' ', 1)[1]
@@ -214,14 +188,18 @@ def main():
                         upload_thread = background_threads.submit(file_client.upload_file, file_path_from_msg)
                         upload_thread.result()
 
-                        if file_id := file_client.get_file_id():
-                            ui.render(msg_type=MessageTypes.SYSTEM, text=f"file is uploaded successfully!")
+                        if result_from_server := file_client.file_socket.recv(1024).decode():
 
-                        message_client.message_socket.send(file_id.encode('utf-8'))
-                        ui.add_message(message=file_id)
+                            if result_from_server == FileTransferStatus.EXCEEDED.value:
+                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Upload failed, file size exceeded")
+
+                            else:
+                                file_id = result_from_server
+                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"file is uploaded successfully!")
+                                message_client.message_socket.send(file_id.encode('utf-8'))
 
                     except InvalidInput:
-                        ui.render(msg_type=MessageTypes.SYSTEM, text=f"{file_path_from_msg} isn't a proper file, try again")
+                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"{file_path_from_msg} isn't a proper file, try again")
                         continue
 
                     except Exception as e:
@@ -229,36 +207,34 @@ def main():
                         raise Exception(f"Error in uploading the file") from e
 
                 elif msg.startswith("/download"):
-                    ui.render(msg_type=MessageTypes.SYSTEM, text=f"vDownloading file ...")
+                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Downloading file ...")
 
                     if len(msg.split()) != 3:
-                        ui.render(
+                        ClientUI.render(
                             msg_type=MessageTypes.SYSTEM,
                             text=" You should provide link file and destination path , Usage: /download <link_file> <dst_path>"
                         )
                         continue
 
-                    download_thread = background_threads.submit(file_client.download_file, msg)
-                    try:
-                        download_thread.result()
-                        ui.render(msg_type=MessageTypes.SYSTEM, text="File is downloaded successfully!")
+                    background_threads.submit(file_client.download_file, msg)
 
-                    except DownloadFileError as e:
-                         ui.render(msg_type=MessageTypes.SYSTEM, text=f"Failed to download this file, {repr(e)} ")
-                         continue
+                    if result_from_server := file_client.file_socket.recv(1024).decode():
+                        print(f"result from server : {result_from_server}")
 
-                    except FileIdNotFoundError:
-                        ui.render(msg_type=MessageTypes.SYSTEM, text="File id was NOT found, check your id or try send this file again")
-                        continue
+                        if result_from_server == FileTransferStatus.SUCCEED.value:
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="File is downloaded successfully!")
+
+                        if result_from_server == FileTransferStatus.NOT_FOUND.value:
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Failed downloading file id was not found")
 
                 elif msg.startswith("/quit"):
-                    ui.render(msg_type=MessageTypes.SYSTEM, text="Exiting chat...")
+                    ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Exiting chat...")
                     message_client.message_socket.close()
                     return
 
                 else:
                     message_client.message_socket.send(msg.encode('utf-8'))
-                    ui.add_message(message=msg)
+
 
 
 if __name__ == '__main__':
@@ -269,5 +245,5 @@ if __name__ == '__main__':
     )
     main()
 
-#todo render function
-#todo error file handling don't working
+
+

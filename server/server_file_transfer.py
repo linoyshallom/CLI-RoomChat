@@ -4,16 +4,14 @@ import socket
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from config import FileServerConfig, END_OF_FILE_INDICATOR
+from config import FileServerConfig
 from db import ChatDB
-from definitions import DownloadFileError, UploadFileError, FileIdNotFoundError
-from definitions.structs import UploadFileData, DownloadFileData
-from definitions.types import FileHandlerTypes
+from definitions import DownloadFileError, UploadFileError, FileHandlerTypes, FileTransferStatus, UploadFileData, DownloadFileData
 from utils import chunkify
 
 
 class FileTransferServer:
-    def __init__(self, host, listen_port):
+    def __init__(self, host: str, listen_port: int):
         self.file_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         try:
@@ -25,17 +23,17 @@ class FileTransferServer:
 
         self.chat_db = ChatDB()
 
-    def file_handler(self, conn):
+    def file_handler(self, conn: socket.socket) -> None:
         while True:
             handler = conn.recv(1024).decode()
-            print(handler)
+
+            if not handler:
+                break
+
             try:
                 handler_type = FileHandlerTypes[handler]
             except KeyError:
                 raise Exception(f"Got unexpected handler type {handler}")   #todo don't catch error for some reason
-
-            except Exception as e:
-                raise Exception(f"Unexpected exception") from e
 
             json_data = conn.recv(1024).decode()
 
@@ -47,54 +45,55 @@ class FileTransferServer:
                 download_data = DownloadFileData(**json.loads(json_data))
                 self._download_file(conn=conn, data=download_data)
 
-    def _upload_file(self, *, conn: socket.socket, data: UploadFileData): #not ready to be checked, still on it
-        file_size = 0
+    def _upload_file(self, *, conn: socket.socket, data: UploadFileData) -> None: #todo no support multiple of requested
         file_id = self._generate_file_id(file_name=data.filename)
+        file_size = data.file_size
+
+        if int(file_size) > int(FileServerConfig.max_file_size):
+            conn.send(FileTransferStatus.EXCEEDED.value.encode('utf-8'))
+            return
+
         uploaded_file_path = os.path.join(FileServerConfig.upload_dir_dst_path(), file_id)
+        aggregated_chunks = b""
+
         try:
-            with open(uploaded_file_path, 'ab') as file:
+            with open(uploaded_file_path, 'wb') as file:
                 while True:
                     chunk = conn.recv(1024)
-                    print(f"chunk - {chunk}")
-
-                    if chunk == END_OF_FILE_INDICATOR:
-                        break
-
-                    file_size += len(chunk)
-                    if file_size > FileServerConfig.max_file_size:
-                        raise UploadFileError("Upload failed, file size exceeded")
-
+                    aggregated_chunks += chunk
                     file.write(chunk)
-                    print(f"writing {chunk} to file  ")
 
+                    if len(aggregated_chunks) == file_size:
+                        break
 
         except Exception as e:
             raise UploadFileError(f"Failed write to {uploaded_file_path}") from e
 
         self.chat_db.store_file_in_files(file_path=uploaded_file_path, file_id=file_id)
         conn.send(file_id.encode('utf-8'))
+        conn.close()
 
-    def _download_file(self, *, conn: socket.socket, data: DownloadFileData):
-        print("into download")
-        while True:
-            file_id = data.file_id
-            user_dir_dst_path = data.dst_path
+    def _download_file(self, *, conn: socket.socket, data: DownloadFileData) -> None:
+        file_id = data.file_id
+        user_dir_dst_path = data.dst_path
+        print(f"file id {file_id}")
 
-            if uploaded_file_path := self.chat_db.get_file_path_by_file_id(file_id=file_id):
-                file_name = os.path.basename(uploaded_file_path).rsplit('-',1)[1]
+        if uploaded_file_path := self.chat_db.get_file_path_by_file_id(file_id=file_id):
+            file_name = os.path.basename(uploaded_file_path).rsplit('-', 1)[1]
 
-                try:
-                    with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path,file_name), 'wb') as dst_file:
-                        for chunk in chunkify(reader_file=src_file):
-                            dst_file.write(chunk)
-                    conn.send("done downloading".encode('utf-8')) # I don't want client to get messages from here.
-                    break
+            try:
+                with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path, file_name), 'wb') as dst_file:
+                    for chunk in chunkify(reader_file=src_file):
+                        dst_file.write(chunk)
+                conn.send(FileTransferStatus.SUCCEED.value.encode('utf-8'))
 
-                except Exception as e:
-                    raise DownloadFileError(f"Failed to download {file_id}") from e
+            except Exception as e:
+                raise DownloadFileError(f"Failed to download {file_id}") from e
 
-            else:
-                raise FileIdNotFoundError(f"Failed to download")
+        else:
+            print("got into not found")
+            conn.send(FileTransferStatus.NOT_FOUND.value.encode('utf-8'))
+
 
     @staticmethod
     def _generate_file_id(*, file_name: str) -> str:
@@ -116,8 +115,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-#todo servers execution should be in one place ?
-# exceptions handling
-# check maximum file size if raise exception - dont raising exception
-# if something failed in the server i want to allow chat anyway

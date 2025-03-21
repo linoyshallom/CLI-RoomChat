@@ -36,6 +36,7 @@ class SetupRoomData(BaseModel):
 
 class UploadFileData(BaseModel):
     filename: str
+    file_size: int
 
 class DownloadFileData(BaseModel):
     file_id: str

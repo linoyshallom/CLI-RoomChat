@@ -1,1 +1,1 @@
-from .utils import chunkify, split_messages_in_buffer
+from .utils import chunkify
