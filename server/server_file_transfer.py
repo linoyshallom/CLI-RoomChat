@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import socket
 import uuid
@@ -35,6 +36,7 @@ class FileTransferServer:
                 handler_type = FileHandlerTypes[handler]
 
             except Exception:
+                logger.exception(f"Got unexpected handler type {handler}")
                 raise KeyError(f"Got unexpected handler type {handler}")
 
             else:
@@ -49,10 +51,12 @@ class FileTransferServer:
                     self._download_file(conn=conn, data=download_data)
 
     def _upload_file(self, *, conn: socket.socket, data: UploadFileData) -> None:
+        logger.info("Server got upload request")
         file_id = self._generate_file_id(file_name=data.filename)
         file_size = data.file_size
 
-        if int(file_size) > FileServerConfig.max_file_size:
+        if file_size > FileServerConfig.max_file_size:
+            logger.warning(f"File {data.filename} has exceeded the maximum size (16 MB)")
             conn.send(FileTransferStatus.EXCEEDED.value.encode('utf-8'))
             return
 
@@ -73,14 +77,18 @@ class FileTransferServer:
                         break
 
         except Exception as e:
+            conn.send(FileTransferStatus.FAILED.value.encode('utf-8')) #check
+            logger.exception(f"Failed write to {uploaded_file_path} - {repr(e)}")
             raise UploadFileError(f"Failed write to {uploaded_file_path}") from e
 
         with self.chat_db.session() as db_conn:
             self.chat_db.store_file_in_files(db_conn=db_conn, file_path=uploaded_file_path, file_id=file_id)
 
         conn.send(file_id.encode('utf-8'))
+        logger.info(f"Uploading done, File id has sent to client ...")
 
     def _download_file(self, *, conn: socket.socket, data: DownloadFileData) -> None:
+        logger.info("Server Got Download request")
         file_id = data.file_id
         user_dir_dst_path = data.dst_path
 
@@ -96,9 +104,12 @@ class FileTransferServer:
                 conn.send(FileTransferStatus.SUCCEED.value.encode('utf-8'))
 
             except Exception as e:
+                logger.exception(f"Download failed, probably cannot write to {data.dst_path} ") #check
+                conn.send(FileTransferStatus.FAILED.value.encode('utf-8'))
                 raise DownloadFileError(f"Failed to download {file_id}") from e
 
         else:
+            logger.warning(f"File id was not found")
             conn.send(FileTransferStatus.NOT_FOUND.value.encode('utf-8'))
 
     @staticmethod
@@ -110,7 +121,7 @@ class FileTransferServer:
         with ThreadPoolExecutor(max_workers=FileServerConfig.max_threads_number) as executor:
             while True:
                 client_sock, addr = self.file_server.accept()
-                print(f"Successfully connected client {addr[0]} {addr[1]} to files server \n")
+                logger.info(f"Successfully connected client {addr[0]} {addr[1]} to files server \n")
                 executor.submit(self.file_handler, client_sock)
 
 def main():
@@ -119,5 +130,10 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
     main()
 

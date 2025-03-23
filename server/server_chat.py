@@ -1,5 +1,6 @@
 import datetime
 import json
+import logging
 import socket
 import threading
 import time
@@ -154,7 +155,6 @@ class ChatServer:
     def _broadcast_to_all_active_clients_in_room(self, *, msg: MessageInfo, current_room: str) -> None:
         #clients who are connected to the client current room gets messages in real-time, and clients
         #connected to another room will fetch the messages from db while joining . e.g. chat, joining chat, leaving chat messages ...
-
         if clients_in_room := self.room_name_to_active_clients.get(current_room):
             for client in clients_in_room:
                 final_msg = msg.formatted_msg() + END_OF_MSG_INDICATOR
@@ -170,7 +170,7 @@ class ChatServer:
         while True:
             with ThreadPoolExecutor(max_workers=1) as executor:
                 client_sock, addr = self.chat_server.accept()
-                print(f"Successfully connected client {addr[0]} {addr[1]} to messages server\n")
+                logger.info(f"Successfully connected client {addr[0]} {addr[1]} to messages server\n")
                 executor.submit(self.client_handler, client_sock)
 
 def main():
@@ -178,6 +178,11 @@ def main():
     chat_server.start()
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
     main()
 
 

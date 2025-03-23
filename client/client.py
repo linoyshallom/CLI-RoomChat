@@ -181,8 +181,7 @@ def main():
 
                         file_path_from_msg = msg.split(' ', 1)[1]
                         try:
-                            upload_thread = background_threads.submit(file_client.upload_file, file_path_from_msg)
-                            upload_thread.result()
+                            background_threads.submit(file_client.upload_file, file_path_from_msg)
 
                             if result_from_server := file_client.file_socket.recv(1024).decode():
 
@@ -199,6 +198,7 @@ def main():
 
                         except Exception as e:
                             file_client.file_socket.close()
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Upload failed ...")
                             raise Exception(f"Error in uploading the file") from e
 
                     elif msg.startswith("/download"):
@@ -218,8 +218,11 @@ def main():
                             if result_from_server == FileTransferStatus.SUCCEED.value:
                                 ClientUI.render(msg_type=MessageTypes.SYSTEM, text="File is downloaded successfully!")
 
-                            if result_from_server == FileTransferStatus.NOT_FOUND.value:
+                            elif result_from_server == FileTransferStatus.NOT_FOUND.value:
                                 ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Download failed, file id was not found")
+
+                            elif result_from_server == FileTransferStatus.FAILED.value:
+                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Download failed ! (try check your destination path")
 
                     elif msg.startswith("/quit"):
                         ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Exiting chat...")
