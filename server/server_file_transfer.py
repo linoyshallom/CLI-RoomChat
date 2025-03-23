@@ -56,8 +56,8 @@ class FileTransferServer:
         file_size = data.file_size
 
         if file_size > FileServerConfig.max_file_size:
-            logger.warning(f"File {data.filename} has exceeded the maximum size (16 MB)")
             conn.send(FileTransferStatus.EXCEEDED.value.encode('utf-8'))
+            logger.warning(f"File {data.filename} has exceeded the maximum size (16 MB)")
             return
 
         uploaded_file_path = os.path.join(FileServerConfig.upload_dir_dst_path(), file_id)
@@ -77,7 +77,7 @@ class FileTransferServer:
                         break
 
         except Exception as e:
-            conn.send(FileTransferStatus.FAILED.value.encode('utf-8')) #check
+            conn.send(FileTransferStatus.FAILED.value.encode('utf-8'))
             logger.exception(f"Failed write to {uploaded_file_path} - {repr(e)}")
             raise UploadFileError(f"Failed write to {uploaded_file_path}") from e
 
@@ -88,7 +88,7 @@ class FileTransferServer:
         logger.info(f"Uploading done, File id has sent to client ...")
 
     def _download_file(self, *, conn: socket.socket, data: DownloadFileData) -> None:
-        logger.info("Server Got Download request")
+        logger.info("Server got download request")
         file_id = data.file_id
         user_dir_dst_path = data.dst_path
 
@@ -104,7 +104,7 @@ class FileTransferServer:
                 conn.send(FileTransferStatus.SUCCEED.value.encode('utf-8'))
 
             except Exception as e:
-                logger.exception(f"Download failed, probably cannot write to {data.dst_path} ") #check
+                logger.exception(f"Download failed, probably cannot write to {data.dst_path} ")
                 conn.send(FileTransferStatus.FAILED.value.encode('utf-8'))
                 raise DownloadFileError(f"Failed to download {file_id}") from e
 

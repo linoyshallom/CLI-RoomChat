@@ -115,18 +115,7 @@ class ChatDB:
     @classmethod
     def create_room(cls, *, db_conn: sqlite3.Connection, room_name: str):
         cursor = db_conn.cursor()
-
-        cursor.execute('SELECT room_name from rooms WHERE room_name = ?', (room_name,))
-        record = cursor.fetchone()
-
-        # In order to prevent 'room ID' to increase when you enter a room that already exists. It creates gaps between the id records,
-        # which is probably not that critical to keep them sequentially, so I would use ON CONFLICT ... DO NOTHING.
-        if not record:
-            try:
-                cursor.execute('INSERT INTO rooms (room_name) VALUES (?)', (room_name,))
-
-            except sqlite3.IntegrityError:
-                logger.exception(f"Room '{room_name}' already exists")
+        cursor.execute('INSERT INTO rooms (room_name) VALUES (?) ON CONFLICT(room_name) DO NOTHING', (room_name,))
 
     @classmethod
     def store_message(cls, *, db_conn: sqlite3.Connection, text_message: str, sender_name: str, room_name: str, timestamp: str):

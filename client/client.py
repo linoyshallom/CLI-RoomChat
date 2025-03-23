@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
 from config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR
-from definitions import InvalidInput, MessageInfo, RoomTypes, MessageTypes, FileTransferStatus
+from definitions import InvalidInputError, MessageInfo, RoomTypes, MessageTypes, FileTransferStatus
 from utils import chunkify
 
 logger = getLogger(__name__)
@@ -53,7 +53,7 @@ class MessageClient:
         fragmented_msg = ""
         while True:
             try:
-                # I consumed buffer of 1024 bytes which can contains more than one message
+                # I consumed buffer of 1024 bytes which can contains more than one message, so I split by end msg indicator
                 buffer_msg = self._message_socket.recv(1024).decode('utf-8')
                 aggrigated_buffer = fragmented_msg + buffer_msg
 
@@ -105,7 +105,7 @@ class FileClient:
                 for chunk in chunkify(reader_file=file, chunk_size=1024):
                     self._file_socket.sendall(chunk)
         else:
-            raise InvalidInput(f"Client entered inappropriate file")
+            raise InvalidInputError(f"Client entered inappropriate file")
 
     # Triggers download_file methode in FileServerTransfer
     def download_file(self, message: str) -> None:
@@ -140,7 +140,7 @@ def main():
     message_client = MessageClient(host=ClientConfig.host_ip, port=MessageServerConfig.listening_port)
     file_client = FileClient(host=ClientConfig.host_ip, port=FileServerConfig.listening_port)
 
-    time.sleep(0.01)                # Ensure displaying logger info messages before this section (I know that's weird)
+    time.sleep(0.01)                # Ensure displaying logger info messages before this section (I know that's weird, only for displaying)
     username = input("Enter your username:")
     message_client.message_socket.send(username.encode('utf-8'))
 
@@ -193,7 +193,7 @@ def main():
                                     ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"File is uploaded successfully!")
                                     message_client.message_socket.send(file_id.encode('utf-8'))
 
-                        except InvalidInput:
+                        except InvalidInputError:
                             ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"{file_path_from_msg} isn't a proper file, try again")
 
                         except Exception as e:
@@ -222,7 +222,7 @@ def main():
                                 ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Download failed, file id was not found")
 
                             elif result_from_server == FileTransferStatus.FAILED.value:
-                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Download failed ! (try check your destination path")
+                                ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Download failed! (try check your destination path")
 
                     elif msg.startswith("/quit"):
                         ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Exiting chat...")

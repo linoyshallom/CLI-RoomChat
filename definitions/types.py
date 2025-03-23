@@ -14,6 +14,6 @@ class FileHandlerTypes(enum.Enum):
 
 class FileTransferStatus(enum.Enum):
     SUCCEED = "SUCCEED"
-    FAILED = "FAILED"
-    NOT_FOUND = "NOT_FOUND"
     EXCEEDED = "EXCEEDED"
+    NOT_FOUND = "NOT_FOUND"
+    FAILED = "FAILED"

@@ -1,5 +1,5 @@
 
-class InvalidInput(Exception):
+class InvalidInputError(Exception):
     pass
 
 class UploadFileError(Exception):

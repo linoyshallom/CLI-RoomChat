@@ -48,7 +48,7 @@ class ChatServer:
         room_setup_thread = threading.Thread(target=self._setup_room, args=(conn, client_info))
         room_setup_thread.start()
 
-        # Listen for chat massages after setup thread have finished
+        # Listen for chat massages after setup thread has finished
         received_messages_thread = threading.Thread(target=self._receive_messages, args=(conn, client_info,))
         received_messages_thread.start()
 
@@ -73,7 +73,7 @@ class ChatServer:
 
         client_info.room_setup_done_flag.set()
 
-        time.sleep(0.1)  # Ensure displaying joining msg after fetching messages from db (I know that's weird)
+        time.sleep(0.1)  # Ensure displaying joining msg after fetching messages from db (I know that's weird, just for displaying)
         msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} joined {group_name}")
         self._broadcast_to_all_active_clients_in_room(msg=msg_obj, current_room=client_info.current_room)
 
@@ -86,7 +86,7 @@ class ChatServer:
                 sender_name=username,
                 room_name=group_name
             )
-            # If room still not exist , then add to 'checkin_room' table
+            # If room still not exist, then create and add to 'checkin_room' table
             if not room_id:
                 self.chat_db.create_room(db_conn=db_conn, room_name=group_name)
                 user_join_timestamp = join_timestamp
