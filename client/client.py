@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
 from config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR
-from definitions import InvalidInputError, MessageInfo, RoomTypes, MessageTypes, FileTransferStatus
+from definitions import MessageInfo, RoomTypes, MessageTypes, FileTransferStatus
 from utils import chunkify
 
 logger = getLogger(__name__)
@@ -89,29 +89,25 @@ class FileClient:
 
     # Triggers upload_file methode in FileServerTransfer
     def upload_file(self, file_path: str) -> None :
-        if os.path.isfile(file_path):
+        self._file_socket.send("UPLOAD".encode('utf-8'))
 
-            self._file_socket.send("UPLOAD".encode('utf-8'))
+        filename = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path)
+        upload_data = {
+            "filename": filename,
+            "file_size": file_size
+        }
+        self._file_socket.sendall(json.dumps(upload_data).encode('utf-8'))
 
-            filename = os.path.basename(file_path)
-            file_size = os.path.getsize(file_path)
-            upload_data = {
-                "filename": filename,
-                "file_size": file_size
-            }
-            self._file_socket.sendall(json.dumps(upload_data).encode('utf-8'))
-
-            with open(file_path, 'rb') as file:
-                for chunk in chunkify(reader_file=file, chunk_size=1024):
-                    self._file_socket.sendall(chunk)
-        else:
-            raise InvalidInputError(f"Client entered inappropriate file")
+        with open(file_path, 'rb') as file:
+            for chunk in chunkify(reader_file=file, chunk_size=1024):
+                self._file_socket.sendall(chunk)
 
     # Triggers download_file methode in FileServerTransfer
     def download_file(self, message: str) -> None:
         self.file_socket.send("DOWNLOAD".encode('utf-8'))
         file_id = message.split()[1]
-        user_dir_dst_path = message.split()[2]
+        user_dir_dst_path = message.split()[2].strip()
 
         download_data = {
             "file_id": file_id,
@@ -140,9 +136,13 @@ def main():
     message_client = MessageClient(host=ClientConfig.host_ip, port=MessageServerConfig.listening_port)
     file_client = FileClient(host=ClientConfig.host_ip, port=FileServerConfig.listening_port)
 
-    time.sleep(0.01)                # Ensure displaying logger info messages before this section (I know that's weird, only for displaying)
-    username = input("Enter your username:")
-    message_client.message_socket.send(username.encode('utf-8'))
+    while True:
+        username = input("Enter your username: ")
+        if username:
+            message_client.message_socket.send(username.encode('utf-8'))
+            break
+        else:
+            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="You've entered an empty username, try again... \n")
 
     with ThreadPoolExecutor(max_workers=5) as background_threads:
         while True:
@@ -156,7 +156,7 @@ def main():
 
             except KeyError:
                 ClientUI.clear_screen()
-                ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Got unexpected room type {chosen_room}, try again")
+                ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Got an unexpected room type {chosen_room}, try again")
 
             else:
                 background_threads.submit(ClientUI.start_receiving,message_client)
@@ -173,18 +173,21 @@ def main():
                         break
 
                     elif msg.startswith("/file"):
-                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Uploading file ...")
-
                         if len(msg.split(' ', 1)) != 2:
-                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text=" No file path provided. Usage: /file <path>")
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="No file path provided. Usage: /file <path>")
                             continue
 
                         file_path_from_msg = msg.split(' ', 1)[1]
+
+                        if not os.path.isfile(file_path_from_msg):
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"'{file_path_from_msg}' isn't a proper file, try again")
+                            continue
+
                         try:
+                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Uploading file ...")
                             background_threads.submit(file_client.upload_file, file_path_from_msg)
 
                             if result_from_server := file_client.file_socket.recv(1024).decode():
-
                                 if result_from_server == FileTransferStatus.EXCEEDED.value:
                                     ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Upload failed, file size exceeded")
 
@@ -193,28 +196,23 @@ def main():
                                     ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"File is uploaded successfully!")
                                     message_client.message_socket.send(file_id.encode('utf-8'))
 
-                        except InvalidInputError:
-                            ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"{file_path_from_msg} isn't a proper file, try again")
-
                         except Exception as e:
                             file_client.file_socket.close()
                             ClientUI.render(msg_type=MessageTypes.SYSTEM, text="Upload failed ...")
                             raise Exception(f"Error in uploading the file") from e
 
                     elif msg.startswith("/download"):
-                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Downloading file ...")
-
                         if len(msg.split()) != 3:
                             ClientUI.render(
                                 msg_type=MessageTypes.SYSTEM,
-                                text=" You should provide link file and destination path , Usage: /download <link_file> <dst_path>"
+                                text="You should provide file id and destination path , Usage: /download <file_id> <dst_path>"
                             )
                             continue
 
+                        ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"Downloading file ...")
                         background_threads.submit(file_client.download_file, msg)
 
                         if result_from_server := file_client.file_socket.recv(1024).decode():
-
                             if result_from_server == FileTransferStatus.SUCCEED.value:
                                 ClientUI.render(msg_type=MessageTypes.SYSTEM, text="File is downloaded successfully!")
 

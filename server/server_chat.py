@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import socket
+import sqlite3
 import threading
 import time
 import typing
@@ -74,7 +75,7 @@ class ChatServer:
         client_info.room_setup_done_flag.set()
 
         time.sleep(0.1)  # Ensure displaying joining msg after fetching messages from db (I know that's weird, just for displaying)
-        msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} joined {group_name}")
+        msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} joined '{group_name}' group")
         self._broadcast_to_all_active_clients_in_room(msg=msg_obj, current_room=client_info.current_room)
 
     def _private_room_setup_handler(self, *, conn: socket.socket, username: str, join_timestamp: str, group_name: str) -> None:
@@ -105,7 +106,7 @@ class ChatServer:
             self.chat_db.create_room(db_conn=db_conn, room_name=group_name)
             self._fetch_history_messages(conn=conn, db_conn=db_conn, group_name=group_name)
 
-    def _fetch_history_messages(self, *, conn: socket.socket, db_conn, group_name: str, join_timestamp: typing.Optional[str] = None) -> None:
+    def _fetch_history_messages(self, *, conn: socket.socket, db_conn: sqlite3.Connection, group_name: str, join_timestamp: typing.Optional[str] = None) -> None:
         formated_messages_from_db = self.chat_db.send_previous_messages_in_room(db_conn=db_conn, room_name=group_name, join_timestamp=join_timestamp)
 
         first_msg = next(formated_messages_from_db, None)
@@ -132,7 +133,7 @@ class ChatServer:
 
                     self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
 
-                    msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} left {client_info.current_room}")
+                    msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} disconnected '{client_info.current_room}'")
                     self._broadcast_to_all_active_clients_in_room(
                         msg= msg_obj,
                         current_room=client_info.current_room
