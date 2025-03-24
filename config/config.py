@@ -9,8 +9,14 @@ class ClientConfig:
     allowed_input_user_pattern: str = "/^[a-zA-Z0-9._]+$/"  # For future: use login enforcement
 
 @dataclasses.dataclass(frozen=True)
+class MessageServerConfig:
+    listening_port: int = 1
+    listener_limit_number: int = 5
+    max_threads_number: int = 7
+
+@dataclasses.dataclass(frozen=True)
 class FileServerConfig:
-    listening_port: int = 78
+    listening_port: int = 2
     listener_limit_number: int = 5
     max_file_size: int = 16_000_000  #16mb
     max_files_stored_in_uploads: int = 20
@@ -31,9 +37,4 @@ class FileServerConfig:
 
         return upload_dir
 
-@dataclasses.dataclass(frozen=True)
-class MessageServerConfig:
-    listening_port: int = 6
-    listener_limit_number: int = 5
-    max_threads_number: int = 7
 

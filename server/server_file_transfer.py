@@ -36,8 +36,8 @@ class FileTransferServer:
                 handler_type = FileHandlerTypes[handler]
 
             except Exception:
-                logger.exception(f"Got unexpected handler type {handler}")
-                raise KeyError(f"Got unexpected handler type {handler}")
+                logger.exception(f"Got an unexpected handler type {handler}")
+                raise KeyError(f"Got an unexpected handler type {handler}")
 
             else:
                 json_data = conn.recv(1024).decode()
@@ -57,7 +57,7 @@ class FileTransferServer:
 
         if file_size > FileServerConfig.max_file_size:
             conn.send(FileTransferStatus.EXCEEDED.value.encode('utf-8'))
-            logger.warning(f"File {data.filename} has exceeded the maximum size (16 MB)")
+            logger.warning(f"File {data.filename} has exceeded 16 MB")
             return
 
         uploaded_file_path = os.path.join(FileServerConfig.upload_dir_dst_path(), file_id)
@@ -78,7 +78,7 @@ class FileTransferServer:
 
         except Exception as e:
             conn.send(FileTransferStatus.FAILED.value.encode('utf-8'))
-            logger.exception(f"Failed write to {uploaded_file_path} - {repr(e)}")
+            logger.exception(f"Failed write to {uploaded_file_path}")
             raise UploadFileError(f"Failed write to {uploaded_file_path}") from e
 
         with self.chat_db.session() as db_conn:
@@ -114,7 +114,7 @@ class FileTransferServer:
 
     @staticmethod
     def _generate_file_id(*, file_name: str) -> str:
-        return f"file-{uuid.uuid4()}-{file_name}"
+        return f"file_id-{uuid.uuid4()}-{file_name}"
 
     def start(self):
         print("File Server started...")
