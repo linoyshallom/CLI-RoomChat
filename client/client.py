@@ -7,8 +7,10 @@ import typing
 from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
+from pydantic import ValidationError
+
 from config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR
-from definitions import MessageInfo, RoomTypes, MessageTypes, FileTransferStatus
+from definitions import MessageInfo, RoomTypes, MessageTypes, FileTransferStatus, UsernameData
 from utils import chunkify
 
 logger = getLogger(__name__)
@@ -138,11 +140,16 @@ def main():
 
     while True:
         username = input("Enter your username: ")
-        if username:
+        try:
+            UsernameData(username=username)
+        except ValidationError:
+            ClientUI.render(
+                msg_type=MessageTypes.SYSTEM,
+                text="Invalid username - only letters, numbers, '.' and '_' are allowed, try again... \n"
+            )
+        else:
             message_client.message_socket.send(username.encode('utf-8'))
             break
-        else:
-            ClientUI.render(msg_type=MessageTypes.SYSTEM, text="You've entered an empty username, try again... \n")
 
     with ThreadPoolExecutor(max_workers=5) as background_threads:
         while True:

@@ -3,8 +3,9 @@ import socket
 import threading
 import typing
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from config import ClientConfig
 from .types import RoomTypes, MessageTypes
 
 
@@ -12,7 +13,7 @@ from .types import RoomTypes, MessageTypes
 class ClientInfo:
     client_conn: socket.socket
     username: str
-    room_type: RoomTypes = None
+    room_type: typing.Optional[RoomTypes] = None
     current_room: typing.Optional[str] = None
     room_setup_done_flag: threading.Event = dataclasses.field(default_factory=threading.Event)
 
@@ -29,6 +30,9 @@ class MessageInfo:
 
         else:
             return f"[{self.msg_timestamp}] [{self.sender_name}]: {self.text_message}"
+
+class UsernameData(BaseModel):
+    username: str = Field(min_length=1, pattern=ClientConfig.allowed_input_user_pattern)
 
 class SetupRoomData(BaseModel):
     room_type: str

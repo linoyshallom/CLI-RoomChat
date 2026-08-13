@@ -1,31 +1,46 @@
 import os
 import sqlite3
+import threading
 import typing
+from contextlib import contextmanager
 from logging import getLogger
 
-from definitions import MessageInfo, MessageTypes
-from contextlib import contextmanager
+from definitions import MessageInfo, MessageTypes, UserNotFoundError
 
 logger = getLogger(__name__)
 
 class ChatDBConfig:
-    db_path: str = os.path.join(os.getcwd(),'db', 'chat.db')
+    # Resolved relative to this file (not the process cwd) so the DB always lands in server/db/,
+    # regardless of the directory the server scripts are launched from.
+    db_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat.db')
 
 class ChatDB:
     def __init__(self):
         self.db_path = ChatDBConfig.db_path
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+
+        # One long-lived connection for the process instead of opening/closing a fresh sqlite3
+        # connection on every single query. Chat server and file server are separate processes,
+        # each holding one of these; WAL mode is what lets two different connections read/write the same file
+        # concurrently without "database is locked" errors, and the lock below just serializes
+        # access from this process's own threads (sqlite3 connections aren't thread-safe by
+        # default). This gets simplified further in the asyncio rewrite.
+        self._connection = sqlite3.connect(self.db_path, check_same_thread=False) #So few threads use the same connection
+        self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA foreign_keys=ON")
+        self._lock = threading.Lock()
 
     @contextmanager
     def session(self):
-        connection = sqlite3.connect(self.db_path)
-        try:
-            yield connection
-        finally:
-            connection.commit()
-            connection.close()
+        with self._lock:
+            try:
+                yield self._connection
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback() #so we wont keep an half transaction if somethings breaks
+                raise
 
     def setup_database(self, db_conn: sqlite3.Connection):
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         cursor = db_conn.cursor()
 
         cursor.execute('''
@@ -49,9 +64,14 @@ class ChatDB:
                sender_id INTEGER NOT NULL,
                room_id INTEGER NOT NULL,
                timestamp DATETIME NOT NULL,
-               FOREIGN KEY (sender_id) REFERENCES users(id), 
-               FOREIGN KEY (room_id) REFERENCES rooms(id) 
+               FOREIGN KEY (sender_id) REFERENCES users(id),
+               FOREIGN KEY (room_id) REFERENCES rooms(id)
                );
+           ''')
+
+        cursor.execute('''
+           CREATE INDEX IF NOT EXISTS idx_messages_room_timestamp
+           ON messages(room_id, timestamp);
            ''')
 
         cursor.execute('''
@@ -60,8 +80,9 @@ class ChatDB:
                  sender_id INTEGER NOT NULL,
                  room_id INTEGER NOT NULL,
                  join_timestamp DATETIME NOT NULL,
-                 FOREIGN KEY (sender_id) REFERENCES users(id), 
-                 FOREIGN KEY (room_id) REFERENCES rooms(id) 
+                 FOREIGN KEY (sender_id) REFERENCES users(id),
+                 FOREIGN KEY (room_id) REFERENCES rooms(id),
+                 UNIQUE (sender_id, room_id)
                  );
              ''')
 
@@ -69,7 +90,8 @@ class ChatDB:
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_path TEXT NOT NULL,
-            file_id TEXT NOT NULL
+            file_id TEXT UNIQUE NOT NULL,
+            file_name TEXT NOT NULL
             );
         ''')
 
@@ -79,38 +101,36 @@ class ChatDB:
 
         room_id = cls.get_room_id_from_rooms(db_conn=db_conn, room_name=room_name)
 
+        # Single JOIN instead of one extra query per row to resolve each sender's username.
         if join_timestamp:
             cursor.execute('''
-              SELECT text_message, sender_id, timestamp FROM messages
-               WHERE room_id = ? 
-               AND timestamp > ? 
-               ORDER BY timestamp ASC
+              SELECT m.text_message, u.username, m.timestamp
+              FROM messages m
+              JOIN users u ON u.id = m.sender_id
+              WHERE m.room_id = ?
+              AND m.timestamp > ?
+              ORDER BY m.timestamp ASC
                ''', (room_id, join_timestamp))
 
         else:
             cursor.execute('''
-                 SELECT text_message, sender_id, timestamp FROM messages
-                  WHERE room_id = ? 
-                  ORDER BY timestamp ASC
+              SELECT m.text_message, u.username, m.timestamp
+              FROM messages m
+              JOIN users u ON u.id = m.sender_id
+              WHERE m.room_id = ?
+              ORDER BY m.timestamp ASC
                   ''', (room_id,))
 
-        if old_messages := cursor.fetchall():
-            for text_message, sender_id, timestamp in old_messages:
-                 old_msg_sender = cls._get_sender_name_from_users(sender_id=sender_id, cursor=cursor)
-                 msg = MessageInfo(type=MessageTypes.CHAT,text_message=text_message, sender_name=old_msg_sender, msg_timestamp=timestamp)
-                 yield msg.formatted_msg()
-        else:
-            return None
+        for text_message, sender_name, timestamp in cursor.fetchall():
+            msg = MessageInfo(type=MessageTypes.CHAT, text_message=text_message, sender_name=sender_name, msg_timestamp=timestamp)
+            yield msg.formatted_msg()
 
     @classmethod
     def store_user(cls, *, db_conn: sqlite3.Connection, sender_name: str):
         cursor = db_conn.cursor()
-
-        cursor.execute('SELECT username from users WHERE username = ?', (sender_name,))
-        username = cursor.fetchone()
-
-        if not username:
-            cursor.execute('INSERT INTO users (username) VALUES (?)', (sender_name,))
+        # Rely on the UNIQUE constraint rather than check-then-insert, which races when two
+        # clients with the same username connect concurrently.
+        cursor.execute('INSERT INTO users (username) VALUES (?) ON CONFLICT(username) DO NOTHING', (sender_name,))
 
     @classmethod
     def create_room(cls, *, db_conn: sqlite3.Connection, room_name: str):
@@ -121,8 +141,7 @@ class ChatDB:
     def store_message(cls, *, db_conn: sqlite3.Connection, text_message: str, sender_name: str, room_name: str, timestamp: str):
         cursor = db_conn.cursor()
 
-        sender_id = cls._get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
-        room_id = cls.get_room_id_from_rooms(db_conn=db_conn, room_name=room_name)
+        sender_id, room_id = cls._get_sender_and_room_ids(db_conn=db_conn, sender_name=sender_name, room_name=room_name)
 
         cursor.execute('''
            INSERT INTO messages (text_message, sender_id, room_id, timestamp)
@@ -132,13 +151,13 @@ class ChatDB:
     def create_user_checkin_room(cls, *, db_conn: sqlite3.Connection, sender_name: str, room_name: str, join_timestamp: str):
         cursor = db_conn.cursor()
 
-        sender_id = cls._get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
-        room_id = cls.get_room_id_from_rooms(db_conn=db_conn, room_name=room_name)
+        sender_id, room_id = cls._get_sender_and_room_ids(db_conn=db_conn, sender_name=sender_name, room_name=room_name)
 
         cursor.execute(
             '''
             INSERT INTO room_checkins (sender_id, room_id, join_timestamp)
             VALUES (?, ?, ?)
+            ON CONFLICT(sender_id, room_id) DO NOTHING
             ''',
             (sender_id, room_id, join_timestamp)
         )
@@ -147,8 +166,7 @@ class ChatDB:
     def get_user_join_timestamp(cls, *, db_conn: sqlite3.Connection, sender_name: str, room_name: str) -> typing.Optional[str]:
         cursor = db_conn.cursor()
 
-        sender_id = cls._get_sender_id_from_users(sender_name=sender_name, cursor=cursor)
-        room_id = cls.get_room_id_from_rooms(db_conn=db_conn, room_name=room_name)
+        sender_id, room_id = cls._get_sender_and_room_ids(db_conn=db_conn, sender_name=sender_name, room_name=room_name)
 
         cursor.execute(
             'SELECT join_timestamp FROM room_checkins WHERE sender_id = ? AND room_id = ?',
@@ -161,19 +179,20 @@ class ChatDB:
         return user_join_timestamp[0]
 
     @classmethod
-    def store_file_in_files(cls, *, db_conn: sqlite3.Connection, file_path: str, file_id: str):
+    def store_file_in_files(cls, *, db_conn: sqlite3.Connection, file_path: str, file_id: str, file_name: str):
         cursor = db_conn.cursor()
         cursor.execute('''
-               INSERT INTO files (file_path, file_id)
-               VALUES (?,?)''', (file_path, file_id))
+               INSERT INTO files (file_path, file_id, file_name)
+               VALUES (?,?,?)''', (file_path, file_id, file_name))
 
     @classmethod
-    def get_file_path_by_file_id(cls, *, db_conn: sqlite3.Connection, file_id: str) -> typing.Optional[str]:
+    def get_file_record_by_file_id(cls, *, db_conn: sqlite3.Connection, file_id: str) -> typing.Optional[typing.Tuple[str, str]]:
+        """Returns (file_path, original file_name) for a given file_id, or None if not found."""
         cursor = db_conn.cursor()
-        cursor.execute('SELECT file_path FROM files WHERE file_id = ?', (file_id,))
+        cursor.execute('SELECT file_path, file_name FROM files WHERE file_id = ?', (file_id,))
         record = cursor.fetchone()
         if record:
-            return record[0]
+            return record[0], record[1]
         return None
 
     @classmethod
@@ -188,15 +207,19 @@ class ChatDB:
         return None
 
     @classmethod
-    def _get_sender_id_from_users(cls, *, sender_name: str, cursor: sqlite3.Cursor) -> int:
-        cursor.execute('SELECT id FROM users where username = ?', (sender_name,))
-        return cursor.fetchone()[0]
-
-    @classmethod
-    def _get_sender_name_from_users(cls, *, sender_id: int, cursor: sqlite3.Cursor) -> typing.Optional[str]:
-        cursor.execute('SELECT username FROM users where id = ?', (sender_id,))
-        record = cursor.fetchone()
-        if record:
-            return record[0]
-        return None
-
+    def _get_sender_and_room_ids(cls, *, db_conn: sqlite3.Connection, sender_name: str, room_name: str) -> typing.Tuple[int, typing.Optional[int]]:
+        """Resolves a username and room name to their ids in a single round trip (instead of two
+        separate SELECTs). room_id may legitimately be None (room not created yet); a sender
+        that doesn't exist is always a bug upstream, so that raises."""
+        cursor = db_conn.cursor()
+        cursor.execute(
+            '''
+            SELECT (SELECT id FROM users WHERE username = ?),
+                   (SELECT id FROM rooms WHERE room_name = ?)
+            ''',
+            (sender_name, room_name)
+        )
+        sender_id, room_id = cursor.fetchone()
+        if sender_id is None:
+            raise UserNotFoundError(f"No user found with username '{sender_name}'")
+        return sender_id, room_id

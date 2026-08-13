@@ -10,3 +10,6 @@ class DownloadFileError(Exception):
 
 class FileIdNotFoundError(Exception):
     pass
+
+class UserNotFoundError(Exception):
+    pass

@@ -6,17 +6,19 @@ END_OF_MSG_INDICATOR = '@'
 @dataclasses.dataclass(frozen=True)
 class ClientConfig:
     host_ip: str = '127.0.0.1'
-    allowed_input_user_pattern: str = "/^[a-zA-Z0-9._]+$/"  # For future: use login enforcement
+    # Was previously unused and not a valid Python regex (JS-style /../ literal). Now enforced
+    # via definitions.structs.UsernameData on both client and server.
+    allowed_input_user_pattern: str = r"^[a-zA-Z0-9._]+$"
 
 @dataclasses.dataclass(frozen=True)
 class MessageServerConfig:
-    listening_port: int = 1
+    listening_port: int = 5000
     listener_limit_number: int = 5
     max_threads_number: int = 7
 
 @dataclasses.dataclass(frozen=True)
 class FileServerConfig:
-    listening_port: int = 2
+    listening_port: int = 5001
     listener_limit_number: int = 5
     max_file_size: int = 16_000_000  #16mb
     max_files_stored_in_uploads: int = 20

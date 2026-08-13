@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
 from config import FileServerConfig
-from db import ChatDB
+from server.db.chat_db import ChatDB
 from definitions import DownloadFileError, UploadFileError, FileHandlerTypes, FileTransferStatus, UploadFileData, DownloadFileData
 from utils import chunkify
 
@@ -24,6 +24,8 @@ class FileTransferServer:
         self._file_server.listen(FileServerConfig.listener_limit_number)
 
         self.chat_db = ChatDB()
+        with self.chat_db.session() as db_conn:
+            self.chat_db.setup_database(db_conn=db_conn)
 
     @property
     def file_server(self) -> socket.socket:
@@ -40,7 +42,9 @@ class FileTransferServer:
                 raise KeyError(f"Got an unexpected handler type {handler}")
 
             else:
-                json_data = conn.recv(1024).decode()
+                # Stopgap buffer bump (was 1024) to stop long file paths/names from truncating
+                # the JSON payload; proper message framing lands with the websockets rewrite (phase 4).
+                json_data = conn.recv(65536).decode()
 
                 if handler_type == FileHandlerTypes.UPLOAD:
                     upload_data = UploadFileData(**json.loads(json_data))
@@ -82,7 +86,7 @@ class FileTransferServer:
             raise UploadFileError(f"Failed write to {uploaded_file_path}") from e
 
         with self.chat_db.session() as db_conn:
-            self.chat_db.store_file_in_files(db_conn=db_conn, file_path=uploaded_file_path, file_id=file_id)
+            self.chat_db.store_file_in_files(db_conn=db_conn, file_path=uploaded_file_path, file_id=file_id, file_name=data.filename)
 
         conn.send(file_id.encode('utf-8'))
         logger.info(f"Uploading done, File id has sent to client ...")
@@ -93,10 +97,10 @@ class FileTransferServer:
         user_dir_dst_path = data.dst_path
 
         with self.chat_db.session() as db_conn:
-            uploaded_file_path = self.chat_db.get_file_path_by_file_id(db_conn=db_conn, file_id=file_id)
+            file_record = self.chat_db.get_file_record_by_file_id(db_conn=db_conn, file_id=file_id)
 
-        if uploaded_file_path:
-            file_name = os.path.basename(uploaded_file_path).rsplit('-', 1)[1]
+        if file_record:
+            uploaded_file_path, file_name = file_record
             try:
                 with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path, file_name), 'wb') as dst_file:
                     for chunk in chunkify(reader_file=src_file):

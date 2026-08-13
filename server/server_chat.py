@@ -4,7 +4,6 @@ import logging
 import socket
 import sqlite3
 import threading
-import time
 import typing
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -26,10 +25,12 @@ class ChatServer:
 
         self._chat_server.listen(MessageServerConfig.listener_limit_number)
 
-        self.active_clients: typing.Set[ClientInfo] = set()
         self.room_name_to_active_clients: typing.DefaultDict[str, typing.List[ClientInfo]] = defaultdict(list)
+        self._rooms_lock = threading.Lock() #todo added locking here because thread-per-connection model has shared mutable state; removed in the asyncio rewrite since the event loop model eliminates this class of race condition
 
         self.chat_db = ChatDB()
+        with self.chat_db.session() as db_conn:
+            self.chat_db.setup_database(db_conn=db_conn)
 
         self.room_setup_done_flag = threading.Event()
 
@@ -41,7 +42,6 @@ class ChatServer:
         sender_name = conn.recv(1024).decode('utf-8')
 
         with self.chat_db.session() as db_conn:
-            self.chat_db.setup_database(db_conn=db_conn)
             self.chat_db.store_user(db_conn=db_conn, sender_name=sender_name.strip())
 
         client_info = ClientInfo(client_conn=conn, username=sender_name)
@@ -54,7 +54,9 @@ class ChatServer:
         received_messages_thread.start()
 
     def _setup_room(self, conn: socket.socket, client_info: ClientInfo) -> None:
-        json_data = conn.recv(1024).decode('utf-8')
+        # Stopgap buffer bump (was 1024) to stop room-setup JSON from truncating on long group
+        # names; proper message framing lands with the websockets rewrite (phase 4).
+        json_data = conn.recv(65536).decode('utf-8')
         setup_room_data = SetupRoomData(**json.loads(json_data))
 
         room_type = setup_room_data.room_type
@@ -70,11 +72,14 @@ class ChatServer:
 
         client_info.room_type = RoomTypes(room_type.upper())
         client_info.current_room = group_name
-        self.room_name_to_active_clients[group_name].append(client_info)
+        with self._rooms_lock:
+            self.room_name_to_active_clients[group_name].append(client_info)
 
         client_info.room_setup_done_flag.set()
 
-        time.sleep(0.1)  # Ensure displaying joining msg after fetching messages from db (I know that's weird, just for displaying)
+        # History is fetched and sent to `conn` above, and the join message is broadcast below,
+        # both from this same thread on the same socket - TCP already guarantees that ordering,
+        # so no artificial delay is needed here.
         msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} joined '{group_name}' group")
         self._broadcast_to_all_active_clients_in_room(msg=msg_obj, current_room=client_info.current_room)
 
@@ -127,44 +132,73 @@ class ChatServer:
         client_info.room_setup_done_flag.wait()
 
         while True:
-            if msg := conn.recv(2048).decode('utf-8'):
-                if msg == '/switch':
-                    client_info.room_setup_done_flag.clear() # Clear flag so all messages will be sent to the setup from this time
+            raw_msg = conn.recv(2048)
 
-                    self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
+            if not raw_msg:
+                # Peer closed the socket without sending /quit (e.g. terminal closed, network
+                # drop). recv() on a closed connection returns b'' forever, so without this
+                # check the loop would spin at 100% CPU and keep broadcasting to a dead socket.
+                self._handle_client_disconnect(client_info)
+                return
 
-                    msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} disconnected from '{client_info.current_room}'")
-                    self._broadcast_to_all_active_clients_in_room(
-                        msg= msg_obj,
-                        current_room=client_info.current_room
-                    )
+            msg = raw_msg.decode('utf-8')
 
-                    self._setup_room(conn, client_info)
+            if msg == '/switch':
+                client_info.room_setup_done_flag.clear() # Clear flag so all messages will be sent to the setup from this time
 
-                else:
-                    msg_timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    msg_obj = MessageInfo(type=MessageTypes.CHAT, text_message=msg, sender_name=client_info.username, msg_timestamp=msg_timestamp)
+                self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
 
-                    self._broadcast_to_all_active_clients_in_room(
-                        msg=msg_obj,
-                        current_room=client_info.current_room
-                    )
+                msg_obj = MessageInfo( type=MessageTypes.SYSTEM, text_message=f"{client_info.username} disconnected from '{client_info.current_room}'")
+                self._broadcast_to_all_active_clients_in_room(
+                    msg= msg_obj,
+                    current_room=client_info.current_room
+                )
 
-                    with self.chat_db.session() as db_conn:
-                        self.chat_db.store_message(db_conn=db_conn, text_message=msg, sender_name=client_info.username, room_name=client_info.current_room, timestamp=msg_timestamp)
+                self._setup_room(conn, client_info)
+
+            else:
+                msg_timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                msg_obj = MessageInfo(type=MessageTypes.CHAT, text_message=msg, sender_name=client_info.username, msg_timestamp=msg_timestamp)
+
+                self._broadcast_to_all_active_clients_in_room(
+                    msg=msg_obj,
+                    current_room=client_info.current_room
+                )
+
+                with self.chat_db.session() as db_conn:
+                    self.chat_db.store_message(db_conn=db_conn, text_message=msg, sender_name=client_info.username, room_name=client_info.current_room, timestamp=msg_timestamp)
+
+    def _handle_client_disconnect(self, client_info: ClientInfo) -> None:
+        self._remove_client_in_current_room(current_room=client_info.current_room, sender_username=client_info.username)
+
+        msg_obj = MessageInfo(type=MessageTypes.SYSTEM, text_message=f"{client_info.username} disconnected from '{client_info.current_room}'")
+        self._broadcast_to_all_active_clients_in_room(msg=msg_obj, current_room=client_info.current_room)
+
+        client_info.client_conn.close()
 
     def _broadcast_to_all_active_clients_in_room(self, *, msg: MessageInfo, current_room: str) -> None:
         #clients who are connected to the client current room gets messages in real-time, and clients
         #connected to another room will fetch the messages from db while joining . e.g. chat, joining chat, leaving chat messages ...
-        if clients_in_room := self.room_name_to_active_clients.get(current_room):
-            for client in clients_in_room:
-                final_msg = msg.formatted_msg() + END_OF_MSG_INDICATOR
-                client.client_conn.send(final_msg.encode('utf-8'))
+        with self._rooms_lock:
+            clients_in_room = list(self.room_name_to_active_clients.get(current_room, [])) # Working on a snapshot of the list
+
+        final_msg = (msg.formatted_msg() + END_OF_MSG_INDICATOR).encode('utf-8')
+        dead_clients = []
+        for client in clients_in_room:
+            try:
+                client.client_conn.send(final_msg)
+            except OSError:
+                # If a send operation fails because a client disconnected, the entire broadcast isn't discarded. instead, it is cleaned up later.
+                dead_clients.append(client)
+
+        for client in dead_clients:
+            self._remove_client_in_current_room(current_room=current_room, sender_username=client.username)
 
     def _remove_client_in_current_room(self, *, current_room: str, sender_username: str) -> None:
-        self.room_name_to_active_clients[current_room] = [
-            client for client in self.room_name_to_active_clients[current_room] if client.username != sender_username
-        ]
+        with self._rooms_lock:
+            self.room_name_to_active_clients[current_room] = [
+                client for client in self.room_name_to_active_clients[current_room] if client.username != sender_username
+            ]
 
     def start(self):
         print("Chat Server started...")
