@@ -95,6 +95,14 @@ class ChatDB:
             );
         ''')
 
+        # CREATE TABLE IF NOT EXISTS above is a no-op against a files table that already exists
+        # from before file_name was added to this schema, so older db files never pick the
+        # column up on their own - every upload against them fails with "no column named
+        # file_name", outside any try/except, silently killing the handler thread.
+        existing_file_columns = {row[1] for row in cursor.execute('PRAGMA table_info(files)').fetchall()}
+        if 'file_name' not in existing_file_columns:
+            cursor.execute("ALTER TABLE files ADD COLUMN file_name TEXT NOT NULL DEFAULT ''")
+
     @classmethod
     def send_previous_messages_in_room(cls, *, db_conn: sqlite3.Connection, room_name: str, join_timestamp: typing.Optional[str] = None) -> typing.Generator[str, None, None]:
         cursor = db_conn.cursor()

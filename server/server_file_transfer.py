@@ -9,7 +9,7 @@ from logging import getLogger
 from config import FileServerConfig
 from server.db.chat_db import ChatDB
 from definitions import DownloadFileError, UploadFileError, FileHandlerTypes, FileTransferStatus, UploadFileData, DownloadFileData
-from utils import chunkify
+from utils import chunkify, recv_framed
 
 logger = getLogger(__name__)
 
@@ -33,7 +33,16 @@ class FileTransferServer:
 
     def file_handler(self, conn: socket.socket) -> None:
         while True:
-            handler = conn.recv(1024).decode()
+            # Handler type + metadata arrive as one length-prefixed message (see recv_framed) -
+            # previously these were two separate recv() calls matched against two separate client
+            # sends, which broke when TCP batched them together (near-guaranteed on loopback for
+            # small/fast back-to-back sends with no delay between them, e.g. file uploads).
+            try:
+                envelope = json.loads(recv_framed(conn).decode())
+            except ConnectionError:
+                return
+
+            handler = envelope.pop("handler_type", None)
             try:
                 handler_type = FileHandlerTypes[handler]
 
@@ -42,16 +51,12 @@ class FileTransferServer:
                 raise KeyError(f"Got an unexpected handler type {handler}")
 
             else:
-                # Stopgap buffer bump (was 1024) to stop long file paths/names from truncating
-                # the JSON payload; proper message framing lands with the websockets rewrite (phase 4).
-                json_data = conn.recv(65536).decode()
-
                 if handler_type == FileHandlerTypes.UPLOAD:
-                    upload_data = UploadFileData(**json.loads(json_data))
+                    upload_data = UploadFileData(**envelope)
                     self._upload_file(conn=conn, data=upload_data)
 
                 elif handler_type == FileHandlerTypes.DOWNLOAD:
-                    download_data = DownloadFileData(**json.loads(json_data))
+                    download_data = DownloadFileData(**envelope)
                     self._download_file(conn=conn, data=download_data)
 
     def _upload_file(self, *, conn: socket.socket, data: UploadFileData) -> None:
@@ -89,7 +94,7 @@ class FileTransferServer:
             self.chat_db.store_file_in_files(db_conn=db_conn, file_path=uploaded_file_path, file_id=file_id, file_name=data.filename)
 
         conn.send(file_id.encode('utf-8'))
-        logger.info(f"Uploading done, File id has sent to client ...")
+        logger.info(f"Uploading done, '{data.filename}' saved to {uploaded_file_path}, file_id sent to client")
 
     def _download_file(self, *, conn: socket.socket, data: DownloadFileData) -> None:
         logger.info("Server got download request")
@@ -101,11 +106,13 @@ class FileTransferServer:
 
         if file_record:
             uploaded_file_path, file_name = file_record
+            downloaded_file_path = os.path.join(user_dir_dst_path, file_name)
             try:
-                with open(uploaded_file_path, 'rb') as src_file, open(os.path.join(user_dir_dst_path, file_name), 'wb') as dst_file:
+                with open(uploaded_file_path, 'rb') as src_file, open(downloaded_file_path, 'wb') as dst_file:
                     for chunk in chunkify(reader_file=src_file):
                         dst_file.write(chunk)
                 conn.send(FileTransferStatus.SUCCEED.value.encode('utf-8'))
+                logger.info(f"Downloading done, '{file_name}' copied from {uploaded_file_path} to {downloaded_file_path}")
 
             except Exception as e:
                 logger.exception(f"Download failed, probably cannot write to {data.dst_path} ")

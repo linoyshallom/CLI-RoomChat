@@ -10,8 +10,8 @@ from logging import getLogger
 from pydantic import ValidationError
 
 from config import ClientConfig, MessageServerConfig, FileServerConfig, END_OF_MSG_INDICATOR
-from definitions import MessageInfo, RoomTypes, MessageTypes, FileTransferStatus, UsernameData
-from utils import chunkify
+from definitions import MessageInfo, RoomTypes, MessageTypes, FileTransferStatus, FileHandlerTypes, UsernameData
+from utils import chunkify, send_framed
 
 logger = getLogger(__name__)
 
@@ -91,15 +91,17 @@ class FileClient:
 
     # Triggers upload_file methode in FileServerTransfer
     def upload_file(self, file_path: str) -> None :
-        self._file_socket.send("UPLOAD".encode('utf-8'))
-
         filename = os.path.basename(file_path)
         file_size = os.path.getsize(file_path)
         upload_data = {
+            "handler_type": FileHandlerTypes.UPLOAD.name,
             "filename": filename,
             "file_size": file_size
         }
-        self._file_socket.sendall(json.dumps(upload_data).encode('utf-8'))
+        # Handler type + metadata travel as one length-prefixed message so the server can't
+        # accidentally read a partial/merged blob if TCP batches this with the file bytes below
+        # (both would otherwise be sent back-to-back with no delay between them).
+        send_framed(self._file_socket, json.dumps(upload_data).encode('utf-8'))
 
         with open(file_path, 'rb') as file:
             for chunk in chunkify(reader_file=file, chunk_size=1024):
@@ -107,15 +109,15 @@ class FileClient:
 
     # Triggers download_file methode in FileServerTransfer
     def download_file(self, message: str) -> None:
-        self.file_socket.send("DOWNLOAD".encode('utf-8'))
         file_id = message.split()[1].strip()
         user_dir_dst_path = message.split()[2].strip()
 
         download_data = {
+            "handler_type": FileHandlerTypes.DOWNLOAD.name,
             "file_id": file_id,
             "dst_path": user_dir_dst_path
         }
-        self.file_socket.sendall(json.dumps(download_data).encode('utf-8'))
+        send_framed(self.file_socket, json.dumps(download_data).encode('utf-8'))
 
 class ClientUI:
 
@@ -184,7 +186,10 @@ def main():
                             ClientUI.render(msg_type=MessageTypes.SYSTEM, text="No file path provided. Usage: /file <path>")
                             continue
 
-                        file_path_from_msg = msg.split(' ', 1)[1]
+                        # Windows silently tolerates a trailing space in os.path.isfile()/open(),
+                        # so an unstripped path here would still upload fine while baking the
+                        # stray space into the filename (and therefore the file_id) permanently.
+                        file_path_from_msg = msg.split(' ', 1)[1].strip()
 
                         if not os.path.isfile(file_path_from_msg):
                             ClientUI.render(msg_type=MessageTypes.SYSTEM, text=f"'{file_path_from_msg}' isn't a proper file, try again")
