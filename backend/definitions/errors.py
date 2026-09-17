@@ -5,8 +5,14 @@ class InvalidInputError(Exception):
 class UploadFileError(Exception):
     pass
 
+class FileTooLargeError(Exception):
+    pass
+
 class DownloadFileError(Exception):
     pass
 
 class FileIdNotFoundError(Exception):
+    pass
+
+class UserNotFoundError(Exception):
     pass
