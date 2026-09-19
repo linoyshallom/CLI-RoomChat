@@ -1,22 +1,74 @@
 import asyncio
 import json
-import logging
 import os
 import re
 import typing
 import urllib.parse
+import zlib
 from logging import getLogger
 
 import httpx
 import websockets
+from prompt_toolkit import PromptSession, print_formatted_text
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.patch_stdout import patch_stdout
 from pydantic import ValidationError
 
 from config import ClientConfig, ServerConfig
-from definitions import MessageInfo, MessageTypes, RoomTypes, UsernameData
+from definitions import MessageTypes, RoomTypes, UsernameData
+from utils.logging_config import configure_logging
 
 logger = getLogger(__name__)
 
 _CONTENT_DISPOSITION_FILENAME = re.compile(r'filename="?([^";]+)"?')
+
+# Every chat/system line the server sends is pre-formatted server-side (definitions.structs.
+# MessageInfo.formatted_msg() - "single source of formatting"). These mirror that exact shape
+# so the client can pull sender/timestamp back out for coloring without the server needing to
+# know anything about how the client chooses to render.
+_CHAT_LINE = re.compile(r"^\[(?P<timestamp>[^\]]+)] \[(?P<sender>[^\]]+)]: (?P<text>.*)$", re.DOTALL)
+_SYSTEM_LINE = re.compile(r"^\[SYSTEM]: (?P<text>.*)$", re.DOTALL)
+
+# Named ANSI colors prompt_toolkit understands out of the box - no custom Style needed.
+# "You" and SYSTEM get their own fixed styles so they're never confused with another sender's.
+_SENDER_PALETTE = (
+    "ansicyan", "ansigreen", "ansiyellow", "ansiblue", "ansimagenta",
+    "ansired", "ansibrightgreen", "ansibrightblue", "ansibrightmagenta", "ansibrightred",
+)
+_SELF_STYLE = "bold ansibrightcyan"
+_SYSTEM_STYLE = "italic ansiyellow"
+_TIMESTAMP_STYLE = "ansibrightblack"
+
+
+def _color_for_sender(sender: str) -> str:
+    # Deterministic (not random/cached) so the same username always renders in the same color,
+    # both within a session and across separate runs of the client.
+    return _SENDER_PALETTE[zlib.crc32(sender.encode()) % len(_SENDER_PALETTE)]
+
+
+def _render_chat_line(line: str, *, own_username: str) -> FormattedText:
+    match = _CHAT_LINE.match(line)
+    if not match:
+        # Display-only concern - fall back to the raw line rather than risk hiding a message
+        # whose shape doesn't match what the server is currently sending.
+        return FormattedText([("", line)])
+
+    sender = match["sender"]
+    is_self = sender == own_username
+    sender_style = _SELF_STYLE if is_self else f"bold {_color_for_sender(sender)}"
+    display_name = "You" if is_self else sender
+
+    return FormattedText([
+        (_TIMESTAMP_STYLE, f"[{match['timestamp']}] "),
+        (sender_style, display_name),
+        ("", f": {match['text']}"),
+    ])
+
+
+def _render_system_line(line: str) -> FormattedText:
+    match = _SYSTEM_LINE.match(line)
+    text = match["text"] if match else line
+    return FormattedText([(_SYSTEM_STYLE, f"[SYSTEM]: {text}")])
 
 
 def _filename_from_content_disposition(header: typing.Optional[str]) -> typing.Optional[str]:
@@ -93,9 +145,11 @@ class ChatClient:
 class ClientUI:
 
     @classmethod
-    def render(cls, *, msg_type, text):
-        msg = MessageInfo(type=msg_type, text_message=text)
-        print(msg.formatted_msg())
+    def render(cls, *, msg_type: MessageTypes, text: str) -> None:
+        if msg_type == MessageTypes.SYSTEM:
+            print_formatted_text(FormattedText([(_SYSTEM_STYLE, f"[SYSTEM]: {text}")]))
+        else:
+            print_formatted_text(FormattedText([("", text)]))
 
     @classmethod
     def clear_screen(cls):
@@ -105,18 +159,22 @@ class ClientUI:
 async def _receive_loop(client: ChatClient) -> None:
     try:
         async for msg in client.receive_messages():
-            print(f"\n {msg.get('text', '')}")
+            text = msg.get("text", "")
+            if msg.get("type") == MessageTypes.SYSTEM.value:
+                print_formatted_text(_render_system_line(text))
+            else:
+                print_formatted_text(_render_chat_line(text, own_username=client.username))
     except websockets.exceptions.ConnectionClosed:
         return
 
 
-async def _prompt_room(client: ChatClient) -> None:
+async def _prompt_room(client: ChatClient, session: PromptSession) -> None:
     while True:
-        print(f"\n Available rooms to chat:")
+        print_formatted_text(FormattedText([("bold", "\nAvailable rooms to chat:")]))
         for room in RoomTypes:
-            print(f"- {room.value}")
+            print_formatted_text(FormattedText([("", f"- {room.value}")]))
 
-        chosen_room = (await asyncio.to_thread(input, "Enter room type: ")).strip().upper()
+        chosen_room = (await session.prompt_async("Enter room type: ")).strip().upper()
 
         try:
             room_type = RoomTypes[chosen_room]
@@ -127,19 +185,19 @@ async def _prompt_room(client: ChatClient) -> None:
 
         group_name = None
         if room_type == RoomTypes.PRIVATE:
-            group_name = (await asyncio.to_thread(input, "Enter private group name you want to chat: ")).strip()
+            group_name = (await session.prompt_async("Enter private group name you want to chat: ")).strip()
 
         await client.join_room(room_type=chosen_room, group_name=group_name)
         return
 
 
-async def _input_loop(client: ChatClient) -> None:
+async def _input_loop(client: ChatClient, session: PromptSession) -> None:
     while True:
-        await _prompt_room(client)
+        await _prompt_room(client, session)
 
         while True:
-            msg = await asyncio.to_thread(
-                input, "\n Enter a message (text, /switch, /file <path>, /download <file_id> <path> :  "
+            msg = await session.prompt_async(
+                "\nEnter a message (text, /switch, /file <path>, /download <file_id> <path>: "
             )
 
             if not msg:
@@ -214,31 +272,37 @@ async def _input_loop(client: ChatClient) -> None:
 
 
 async def main():
-    while True:
-        username = await asyncio.to_thread(input, "Enter your username: ")
+    session = PromptSession()
+
+    # patch_stdout() makes prompt_toolkit redraw the active prompt whenever something else
+    # writes to stdout while it's up - without it, a message arriving mid-keystroke from
+    # _receive_loop would print straight into the input line instead of above it.
+    with patch_stdout():
+        while True:
+            username = (await session.prompt_async("Enter your username: ")).strip()
+            try:
+                UsernameData(username=username)
+            except ValidationError:
+                ClientUI.render(
+                    msg_type=MessageTypes.SYSTEM,
+                    text="Invalid username - only letters, numbers, '.' and '_' are allowed, try again..."
+                )
+            else:
+                break
+
+        client = ChatClient(host=ClientConfig.host_ip, port=ServerConfig.listening_port, username=username)
+        await client.connect()
+
         try:
-            UsernameData(username=username)
-        except ValidationError:
-            ClientUI.render(
-                msg_type=MessageTypes.SYSTEM,
-                text="Invalid username - only letters, numbers, '.' and '_' are allowed, try again... \n"
-            )
-        else:
-            break
-
-    client = ChatClient(host=ClientConfig.host_ip, port=ServerConfig.listening_port, username=username)
-    await client.connect()
-
-    try:
-        await asyncio.gather(_receive_loop(client), _input_loop(client))
-    finally:
-        await client.close()
+            await asyncio.gather(_receive_loop(client), _input_loop(client, session))
+        finally:
+            await client.close()
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[logging.StreamHandler()]
+    configure_logging(
+        source="client",
+        log_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs"),
+        console=False,
     )
     asyncio.run(main())

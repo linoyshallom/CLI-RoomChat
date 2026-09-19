@@ -16,9 +16,9 @@ from definitions import (
     RoomTypes, MessageTypes, UploadFileError, FileTooLargeError,
 )
 from server.db.chat_db import ChatDB
-from server.logging_config import configure_logging
 from server.rooms import ClientInfo, RoomRegistry
 from utils import chunkify
+from utils.logging_config import configure_logging
 
 logger = getLogger(__name__)
 
@@ -372,5 +372,5 @@ def main():
 
 
 if __name__ == '__main__':
-    configure_logging()
+    configure_logging(source="server", log_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs"))
     main()

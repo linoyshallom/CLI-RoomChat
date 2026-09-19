@@ -1,3 +1,10 @@
+# Project-local runtime artifacts
+server/logs/
+client/logs/
+server/db/chat.db
+server/db/chat.db-shm
+server/db/chat.db-wal
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
