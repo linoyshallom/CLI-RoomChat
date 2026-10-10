@@ -1,0 +1,6 @@
+{
+  "name": "RoomChat",
+  "description": "Clean, WhatsApp-style real-time multi-room chat with instant username entry, private and global rooms, WebSocket communication, and file sharing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

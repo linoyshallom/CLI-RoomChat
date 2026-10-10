@@ -8,6 +8,7 @@ from logging import getLogger
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from config import ServerConfig
@@ -364,6 +365,19 @@ async def download_file(file_id: str) -> FileResponse:
         "download complete", extra={"event": "download_complete", "file_id": file_id, "file_name": file_name},
     )
     return FileResponse(path=file_path, filename=file_name, media_type="application/octet-stream")
+
+
+# --- serve the built UI (npm run build in UI/) from this same app/port, so the whole thing
+# deploys as one process - mounted last so it only matches requests the routes above didn't ---
+
+_ui_dist_dir = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "UI", "dist"))
+if os.path.isdir(_ui_dist_dir):
+    app.mount("/", StaticFiles(directory=_ui_dist_dir, html=True), name="ui")
+else:
+    logger.warning(
+        "UI build not found, not serving a frontend",
+        extra={"event": "ui_build_missing", "expected_path": _ui_dist_dir},
+    )
 
 
 def main():
